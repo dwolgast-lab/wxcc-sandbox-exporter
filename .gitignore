@@ -18,3 +18,14 @@ venv/
 *.egg-info/
 build/
 dist/
+
+# Vendored OpenAPI documents (13.7 MB) — deliberately NOT committed.
+# Cisco revises these roughly weekly, so a static copy goes stale within days;
+# the sibling wxcc-skills repo reached the same conclusion. Route facts derived
+# from them are transcribed into src/wxcc_export/registry.py with the reasoning
+# recorded in the implementation plan, and observed behaviour that CONTRADICTS
+# them lives in docs/api-notes.md (the probe wins over the spec).
+# Re-download from https://developer.webex.com if you need to re-derive routes.
+docs/webex-admin.json
+docs/webex-cloud-calling.json
+docs/webex-contact-center.json
