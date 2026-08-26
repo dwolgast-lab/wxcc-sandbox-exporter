@@ -1,0 +1,298 @@
+"""What exists, where it lives, and what must be created before it.
+
+Route facts are transcribed from the OpenAPI documents in docs/ and cross-checked
+against the live-verified registry in the sibling wxcc-skills repo
+(mcp_server.py:53). `deps` is derived from the required create fields: if
+creating X requires a Y id, X depends on Y.
+
+THE VERSION PREFIX RULE (verified across every entity): the LIST path carries
+v2/v3; the ITEM path and the CREATE path DROP it. `GET v2/team` lists, but
+`POST v2/team` is not the create endpoint.
+"""
+
+from __future__ import annotations
+
+
+class UnknownEntity(Exception):
+    """The entity name is not in the registry at all."""
+
+
+class NoChildCollection(Exception):
+    """The entity is known, but has no child collection (address-book and
+    outdial-ani are the only two that do)."""
+
+
+class NotWritable(Exception):
+    """The entity has no create endpoint in this API."""
+
+
+CC_ENTITIES: dict[str, dict] = {
+    # --- no dependencies ---
+    "multimedia-profile": {
+        "list": "v2/multimedia-profile", "item": "multimedia-profile/{id}",
+        "create": ["name", "active"], "deps": [], "writable": True,
+    },
+    "work-type": {
+        "list": "v2/work-type", "item": "work-type/{id}",
+        "create": ["name", "workTypeCode", "active"], "deps": [], "writable": True,
+    },
+    "skill": {
+        "list": "v2/skill", "item": "skill/{id}",
+        "create": ["name", "serviceLevelThreshold", "type", "active"],
+        "deps": [], "writable": True,
+    },
+    "holiday-list": {
+        "list": "v2/holiday-list", "item": "holiday-list/{id}",
+        "create": ["name"], "deps": [], "writable": True,
+    },
+    "overrides": {
+        "list": "v2/overrides", "item": "overrides/{id}",
+        "create": ["name"], "deps": [], "writable": True,
+    },
+    "cad-variable": {
+        "list": "v2/cad-variable", "item": "cad-variable/{id}",
+        "create": ["name", "active", "variableType"], "deps": [], "writable": True,
+        "note": "These are the Global Variables in the Control Hub UI.",
+    },
+    "resource-collection": {
+        "list": "v2/resource-collection", "item": "resource-collection/{id}",
+        "create": ["name"], "deps": [], "writable": True,
+    },
+    "dial-number": {
+        "list": "v2/dial-number", "item": "dial-number/{id}",
+        "create": ["number"], "deps": [], "writable": True,
+    },
+    "audio-file": {
+        "list": "v2/audio-file", "item": "audio-file/{id}",
+        "create": ["name"], "deps": [], "writable": True, "binary": True,
+        "note": "Upload is multipart/form-data. The spec claims audio-file "
+                "accepts JSON; the sibling repo records that it does not.",
+    },
+    "desktop-layout": {
+        "list": "v2/desktop-layout", "item": "desktop-layout/{id}",
+        "create": ["name"], "deps": [], "writable": True,
+    },
+    "address-book": {
+        "list": "v2/address-book", "item": "address-book/{id}",
+        "create": ["name"], "deps": [], "writable": True,
+        "child": {"list": "v2/address-book/{parentId}/entry",
+                  "create": "address-book/{parentId}/entry"},
+    },
+    "outdial-ani": {
+        "list": "v2/outdial-ani", "item": "outdial-ani/{id}",
+        "create": ["name"], "deps": [], "writable": True,
+        "child": {"list": "v2/outdial-ani/{parentId}/entry",
+                  "create": "outdial-ani/{parentId}/entry"},
+    },
+    "user-profile": {
+        "list": "v3/user-profile", "item": "user-profile/{id}",
+        "create": ["name", "profileType"], "deps": [], "writable": True,
+    },
+
+    # --- one level deep ---
+    "site": {
+        "list": "v2/site", "item": "site/{id}",
+        "create": ["name", "active", "multimediaProfileId"],
+        "deps": ["multimedia-profile"], "writable": True,
+        "note": "All three create fields are required; a 400 names them.",
+    },
+    "auxiliary-code": {
+        "list": "v2/auxiliary-code", "item": "auxiliary-code/{id}",
+        "create": ["name", "active", "workTypeId", "defaultCode"],
+        "deps": ["work-type"], "writable": True,
+        "note": "These are the Idle and Wrap-up codes in the UI.",
+    },
+    "skill-profile": {
+        "list": "v2/skill-profile", "item": "skill-profile/{id}",
+        "create": ["name", "active"], "deps": ["skill"], "writable": True,
+    },
+    "business-hours": {
+        "list": "v2/business-hours", "item": "business-hours/{id}",
+        "create": ["name", "timeZone"], "deps": ["holiday-list", "overrides"],
+        "writable": True,
+    },
+    "entry-point": {
+        "list": "v2/entry-point", "item": "entry-point/{id}",
+        "create": ["name", "entryPointType", "channelType",
+                   "serviceLevelThreshold", "active", "maximumActiveContacts"],
+        "deps": ["dial-number"], "writable": True,
+    },
+    "agent-profile": {
+        "list": "v2/agent-profile", "item": "agent-profile/{id}",
+        "create": ["name"], "deps": ["auxiliary-code", "address-book",
+                                     "outdial-ani", "desktop-layout"],
+        "writable": True,
+        "note": "These are the Desktop Profiles in the UI.",
+    },
+
+    # --- two levels deep ---
+    "team": {
+        "list": "v2/team", "item": "team/{id}",
+        "create": ["name", "active", "siteId", "teamStatus", "teamType"],
+        "deps": ["site", "multimedia-profile", "skill-profile"], "writable": True,
+    },
+    "contact-service-queue": {
+        "list": "v2/contact-service-queue", "item": "contact-service-queue/{id}",
+        "create": ["name", "queueType", "channelType", "serviceLevelThreshold",
+                   "maxActiveContacts", "maxTimeInQueue", "active", "routingType",
+                   "monitoringPermitted", "parkingPermitted", "recordingPermitted",
+                   "recordingAllCallsPermitted", "pauseRecordingPermitted"],
+        "deps": ["team", "skill-profile", "entry-point", "audio-file"],
+        "writable": True,
+        "note": "The entity is contact-service-queue; /queue 404s. The five "
+                "*Permitted booleans are required on create, not defaulted.",
+    },
+
+    # --- read-only ---
+    "user": {
+        "list": "v2/user", "item": "user/{id}",
+        "create": [], "deps": ["site", "team", "skill-profile", "user-profile",
+                               "agent-profile", "multimedia-profile"],
+        "writable": False,
+        "note": "GET only on the collection. Users are created and licensed in "
+                "Control Hub, not here. Exported as a reference manifest.",
+    },
+}
+
+# NOTE: every path below is relative to the WEBEX host
+# (https://webexapis.com/v1), NOT the WxCC regional host that CC_ENTITIES
+# paths use. Handing one of these to the Contact Center client will 404.
+CALLING_OBJECTS: dict[str, dict] = {
+    "locations": {"list": "locations", "item": "locations/{id}",
+                  "scope": "org", "writable": True},
+    "schedules": {"list": "telephony/config/locations/{locationId}/schedules",
+                  "item": "telephony/config/locations/{locationId}/schedules/{id}",
+                  "scope": "location", "writable": True},
+    "auto-attendants": {"list": "telephony/config/autoAttendants",
+                        "item": "telephony/config/locations/{locationId}/autoAttendants/{id}",
+                        "scope": "org", "writable": True},
+    "hunt-groups": {"list": "telephony/config/huntGroups",
+                    "item": "telephony/config/locations/{locationId}/huntGroups/{id}",
+                    "scope": "org", "writable": True},
+    # UNCONFIRMED (U5): the OpenAPI document publishes no org-level or
+    # location-level LIST for call queues - only the item path. This list
+    # route is inferred from that item path and must be probe-confirmed.
+    "call-queues": {"list": "telephony/config/locations/{locationId}/queues",
+                    "item": "telephony/config/locations/{locationId}/queues/{id}",
+                    "scope": "location", "writable": True},
+    # UNCONFIRMED (U5): the location-scoped item route below is inferred.
+    # The published location path for Call Park is .../callParks, which is a
+    # DIFFERENT object (see "call-parks"). Probe before trusting.
+    "call-park-extensions": {"list": "telephony/config/callParkExtensions",
+                             "item": "telephony/config/locations/{locationId}/callParkExtensions/{id}",
+                             "scope": "org", "writable": True},
+    "call-parks": {"list": "telephony/config/locations/{locationId}/callParks",
+                   "item": "telephony/config/locations/{locationId}/callParks/{id}",
+                   "scope": "location", "writable": True},
+    "call-pickups": {"list": "telephony/config/locations/{locationId}/callPickups",
+                     "item": "telephony/config/locations/{locationId}/callPickups/{id}",
+                     "scope": "location", "writable": True},
+    "paging-groups": {"list": "telephony/config/paging",
+                      "item": "telephony/config/locations/{locationId}/paging/{id}",
+                      "scope": "org", "writable": True},
+    "announcements": {"list": "telephony/config/announcements",
+                      "item": "telephony/config/announcements/{id}",
+                      "scope": "org", "writable": True, "binary": True},
+    "virtual-extensions": {"list": "telephony/config/virtualExtensions",
+                           "item": "telephony/config/virtualExtensions/{id}",
+                           "scope": "org", "writable": True},
+    "operating-modes": {"list": "telephony/config/operatingModes",
+                        "item": "telephony/config/operatingModes/{id}",
+                        "scope": "org", "writable": True},
+}
+
+# The spec's own UI grouping, used to label the selection UI.
+SPEC_GROUPS: dict[str, list[str]] = {
+    "Customer Experience": ["contact-service-queue", "business-hours",
+                            "holiday-list", "overrides", "audio-file",
+                            "cad-variable", "entry-point", "dial-number"],
+    "User Management": ["site", "skill", "skill-profile", "team",
+                        "user-profile", "resource-collection", "user"],
+    "Desktop Experience": ["multimedia-profile", "outdial-ani", "desktop-layout",
+                           "address-book", "agent-profile", "auxiliary-code",
+                           "work-type"],
+}
+
+SPEC_OBJECT_MAP: dict[str, str] = {
+    "Queues": "contact-service-queue",
+    "Business Hours": "business-hours",
+    "Audio Files": "audio-file",
+    "Global Variables": "cad-variable",
+    "Sites": "site",
+    "Skill Management": "skill",
+    "Skill Profiles": "skill-profile",
+    "Teams": "team",
+    "User Profiles": "user-profile",
+    "Resource Collections": "resource-collection",
+    "Contact Center Users": "user",
+    "Multimedia Profiles": "multimedia-profile",
+    "Outdial ANI": "outdial-ani",
+    "Desktop Layouts": "desktop-layout",
+    "Address Books": "address-book",
+    "Desktop Profiles": "agent-profile",
+    "Idle/Wrap-up Codes": "auxiliary-code",
+    "Flows": "__flows__",
+    "Subflows": "__subflows__",
+    "Functions": "__functions__",
+}
+
+UNSUPPORTED: dict[str, str] = {
+    "Channels": (
+        "No Channels operation exists anywhere in the Webex Contact Center API "
+        "(searched all 328 paths and all 61 tags). Digital channels are "
+        "provisioned through Webex Connect, a separate platform with its own "
+        "API and its own tenant. Recreate them by hand in Control Hub under "
+        "Contact Center > Customer Experience > Channels."
+    ),
+    "Surveys": (
+        "No Surveys operation exists anywhere in the Webex Contact Center API "
+        "(searched all 328 paths and all 61 tags). The nearest published "
+        "feature is Auto CSAT, which is AI-generated scoring rather than the "
+        "Surveys page, and is not a substitute. Recreate surveys by hand in "
+        "Control Hub under Contact Center > Customer Experience > Surveys."
+    ),
+}
+
+
+def _spec(entity: str) -> dict:
+    if entity not in CC_ENTITIES:
+        raise UnknownEntity(
+            f"unknown entity {entity!r}. Known: {', '.join(sorted(CC_ENTITIES))}"
+        )
+    return CC_ENTITIES[entity]
+
+
+def list_path(entity: str) -> str:
+    return f"organization/{{orgId}}/{_spec(entity)['list']}"
+
+
+def item_path(entity: str, item_id: str) -> str:
+    tail = _spec(entity)["item"].replace("{id}", item_id)
+    return f"organization/{{orgId}}/{tail}"
+
+
+def create_path(entity: str) -> str:
+    spec = _spec(entity)
+    if not spec.get("writable", False):
+        # Deriving a create path from the item path is a guess that LOOKS
+        # right. `user` publishes GET only on its collection, so returning
+        # organization/{orgId}/user here would hand a caller a POST target
+        # the API does not implement.
+        raise NotWritable(
+            f"{entity} has no create endpoint. {spec.get('note', '')}".strip())
+    tail = spec["item"].replace("/{id}", "")
+    return f"organization/{{orgId}}/{tail}"
+
+
+def child_list_path(entity: str, parent_id: str) -> str:
+    child = _spec(entity).get("child")
+    if not child:
+        raise NoChildCollection(f"{entity} has no child collection")
+    return f"organization/{{orgId}}/{child['list'].replace('{parentId}', parent_id)}"
+
+
+def child_create_path(entity: str, parent_id: str) -> str:
+    child = _spec(entity).get("child")
+    if not child:
+        raise NoChildCollection(f"{entity} has no child collection")
+    return f"organization/{{orgId}}/{child['create'].replace('{parentId}', parent_id)}"
