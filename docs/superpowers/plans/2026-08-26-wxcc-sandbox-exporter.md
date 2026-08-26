@@ -25,6 +25,47 @@ Recorded from the user on 2026-08-26:
 
 ---
 
+## Corrections applied after implementation (2026-08-26)
+
+**This plan was executed. Two rounds of adversarial review found nine defects,
+each reproduced by executing code. Where this document's task text still
+disagrees with the committed source, THE SOURCE IS CORRECT.** The items below
+are recorded so a re-execution does not reintroduce them.
+
+### Defects that originated in THIS PLAN
+
+| # | Where | Defect | Correction |
+|---|---|---|---|
+| P1 | Task 9, `export_flows.list_flows` / `list_functions` | `except Exception: return []` made a failed listing indistinguishable from a tenant with zero flows — contradicting `archive.py`'s own stated rule that a partial export must never look complete. **Task 9's test `test_list_flows_returns_empty_on_error` asserted the bug as intended.** | Both functions surface the failure to their caller; `export_all_flows` / `export_all_functions` append a descriptive entry to `errors`. The test was rewritten. |
+| P2 | Task 16, `FUNCTION_IMPORT_FIELD` | Hardcoded to the guess `"file"` **directly beneath a comment saying "refusing is correct, guessing a field name is not."** U3 is unresolved and `docs/api-notes.md` does not exist. | Set to `UNRESOLVED`. `import_functions` refuses until the Task 5 probe resolves it. The success-path test monkeypatches a concrete value; the default stays the sentinel. |
+| P3 | Task 13, `idmap._rewrite_string` | A sequential `text = text.replace(old, new)` loop re-scanned its own output. Three reproduced corruptions: `A→B` + `B→A` reverted to the original; `A→B` + `B→C` chained to `C`; a short id prefixing a longer one produced `"id=SHORTqrstuv;"`. The hardcoded `len(text) < 16` skip also ignored short ids entirely. | Single-pass compiled alternation, longest key first. The length floor derives from the shortest recorded key. Seven regression tests, all confirmed to fail against the original. |
+| P4 | Task 6, `registry.create_path` | Returned a plausible `POST` path for `user`, whose collection publishes GET only. | Raises `NotWritable`. `NoChildCollection` replaces `UnknownEntity` for a known entity with no child collection. |
+| P5 | Task 10, two Calling routes | `call-queues.list` and `call-park-extensions.item` are extrapolated from item paths this document's own evidence table shows as `—`. | Marked `UNCONFIRMED (U5)` in `registry.py` so the probe checks them. |
+| P6 | Global Constraints | "any GitHub user can `git clone && python -m wxcc_export`" was false — that needs `PYTHONPATH=src` or `pip install -e .`. | Added top-level `wxcc-export.py`; verified by subprocess with no `PYTHONPATH`. |
+
+### Defects in the implementation (not this plan's text)
+
+- **Webex Calling import was non-functional.** `export_calling` tagged `_locationId` only on location-scoped items, so all seven org-scope types arrived with no location and the importer refused every one. `import_calling` then fell back to the **raw source-tenant location id** when unmapped, posting it into the target's create path and reporting clean success — undetectable downstream, because `strip_identity` lists `_locationId` in `IDENTITY_FIELDS` so `unmapped()` never saw it. And it never indexed the target for location-scoped objects, so `--on-conflict` never engaged and re-runs duplicated. A follow-up pass found the *same* silent-swallow still present in the `scope == "org"` branch after the first fix covered only `scope == "location"`.
+- **The web UI silently discarded selections.** `/api/import` called only `import_cc` while the page rendered Flows and Calling as enabled checkboxes. It now mirrors `cli._run_import`, subflows-before-flows, sharing one `IdMap`.
+- **`cli._run_export` overwrote** `exported["audio-file"]["error"]` per iteration, so only the last audio failure reached the manifest. Now accumulated.
+- **The bearer-token warning printed twice** per export/import.
+
+### Interface change to Task 15
+
+`import_cc` returns **`(results, idmap)`**, not `results`. Tasks 16, 17 and 18 all
+depend on reusing that map — a flow routing to queue `q1` needs the `q1 → q9`
+mapping the CC pass recorded.
+
+### Still unverified against a live tenant
+
+**No code in this repository has called a real Webex API.** Task 5 has not run.
+`PROJECT_ID_MODE`, `SUBFLOW_TYPE`, `FUNCTION_IMPORT_FIELD`, the Calling
+`_locationId` candidate-field list, and both `UNCONFIRMED` Calling routes are all
+provisional. Run `scripts/probe.py` and record the answers in `docs/api-notes.md`
+before trusting any of them.
+
+---
+
 ## Global Constraints
 
 Every task's requirements implicitly include this section.
@@ -2795,11 +2836,15 @@ def _flow_list_path(project_id: str, flow_type: str) -> str:
     return f"{{orgId}}/project/{project_id}/flows?{q}"
 
 
+# CORRECTED (P1): the block below is the ORIGINAL, DEFECTIVE version.
+# Swallowing the exception makes a failed export look like a tenant with
+# zero flows. See src/wxcc_export/export_flows.py for the fixed shape,
+# which returns the error to its caller for inclusion in errors[].
 def list_flows(client, project_id: str, flow_type: str) -> list[dict]:
     try:
         return client.list_all(_flow_list_path(project_id, flow_type))
     except Exception:
-        return []
+        return []   # <-- DEFECT P1, do not copy
 
 
 def export_flow(client, project_id: str, flow_id: str,
@@ -4920,7 +4965,7 @@ UNRESOLVED = "__UNRESOLVED__"
 
 # U3, from docs/api-notes.md. If the probe did not resolve it, leave the
 # sentinel: refusing is correct, guessing a field name is not.
-FUNCTION_IMPORT_FIELD = "file"
+FUNCTION_IMPORT_FIELD = UNRESOLVED   # CORRECTED (P2): was "file", a guess
 FUNCTION_IMPORT_FILENAME = "function.json"
 
 
