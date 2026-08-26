@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>WxCC Sandbox Import</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main>
+    <h1>WxCC Sandbox Import</h1>
+    <p id="tenant" class="tenant">Checking which tenant this is&hellip;</p>
+
+    <section>
+      <label for="archive">Archive path</label>
+      <input id="archive" type="text" placeholder="C:\path\to\tenant-export.zip">
+      <button id="inspect">Inspect</button>
+    </section>
+
+    <section id="selection" hidden>
+      <h2>Choose what to import</h2>
+      <div id="groups"></div>
+
+      <label for="conflict">If an object of the same name already exists</label>
+      <select id="conflict">
+        <option value="skip">Skip it (recommended - leaves defaults alone)</option>
+        <option value="update">Update it in place</option>
+        <option value="rename">Create a renamed copy</option>
+      </select>
+
+      <p class="warn">
+        Import is a <strong>dry run</strong> until you tick confirm. A dry run
+        writes nothing and shows exactly what would change.
+      </p>
+      <label class="confirm">
+        <input id="confirm" type="checkbox">
+        I have checked the target tenant above and want to write to it
+      </label>
+      <button id="run">Run</button>
+    </section>
+
+    <pre id="output" hidden></pre>
+  </main>
+  <script>window.SESSION_TOKEN = "__SESSION_TOKEN__";</script>
+  <script src="/app.js"></script>
+</body>
+</html>

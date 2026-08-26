@@ -1,0 +1,1 @@
+"""Localhost-only selection UI."""
