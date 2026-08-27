@@ -4,7 +4,7 @@ Findings from a **live WxCC sandbox**, via `scripts/probe.py` and
 `scripts/probe2.py`. **The OpenAPI documents map what exists; the probe records
 what works. Where they disagree, the probe wins.**
 
-Probed: **2026-08-26** against org `174bc2cb-6f00-48c5-b5ce-f4a93ffec5df`
+Probed: **2026-08-26** against org `<org-id-redacted>`
 (`davidwolgast-8xgo`), region host `https://api.wxcc-us1.cisco.com`,
 authenticated with a personal bearer token.
 
