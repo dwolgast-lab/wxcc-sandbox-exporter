@@ -1,20 +1,34 @@
 """Flows, subflows, and functions.
 
-The sibling wxcc-skills repo declares flows out of scope BY POLICY (Cisco ships
-a separate flow-store MCP server for authoring). That is a that-repo decision.
-The export/import API exists and this project uses it.
+FLOWS: the `projectId` is a FIXED CONSTANT, the same on every tenant.
 
-Two values here are NOT derivable from the OpenAPI document and come from the
-live probe recorded in docs/api-notes.md:
-  U1  what projectId is
-  U2  which flowType selects subflows (the schema publishes no enum)
+    5e5c9ad6d61f870d6d778c1b
 
-PROVISIONAL / UNVERIFIED: PROJECT_ID_MODE, SUBFLOW_TYPE, and FLOW_TYPE below
-are the plan's provisional values for U1 and U2. The Task 5 live probe has NOT
-been run against a real tenant yet (it needs tenant credentials), so these are
-best guesses, not confirmed facts. Once the probe runs, its findings belong in
-docs/api-notes.md, and the constants below must be updated to match - trust
-that file over this comment if the two ever disagree.
+It is NOT the org id, and it is not discoverable through the API - there is no
+project-list endpoint. An earlier revision of this file concluded the Flows API
+was "not served on the WxCC regional host at all" after eleven candidate base
+paths all returned empty-body 404s. That conclusion was WRONG. The route is
+fine; the probe was passing an org id (a 36-char UUID) where the route only
+matches a 24-character hex ObjectId, so it never matched the route and the
+gateway 404'd with no body. Confirmed live 2026-08-26:
+
+    GET /{orgId}/project/5e5c9ad6d61f870d6d778c1b/flows?flowType=FLOW
+        200, 23 flows
+    GET /{orgId}/project/5e5c9ad6d61f870d6d778c1b/flows?flowType=SUBFLOW
+        200, 3 subflows
+    GET /{orgId}/project/{proj}/v2/flows/{flowId}:export?flowType=FLOW
+        200, 26 KB of flow JSON (nodes, edges, variables, eventFlows, ...)
+
+TRAP, verified: a well-formed but WRONG projectId returns `200 []`, not an
+error. An empty flow list therefore does NOT prove the project id is right.
+Only the constant above is known to return this tenant's flows.
+
+Functions are a DIFFERENT service and are also confirmed working (U3):
+  GET  /v1/{orgId}/functions             200 {"data":[...], "pageInfo":{...}}
+  POST /v1/{orgId}/functions/{id}:export 200
+    keys: description, inputs, language, name, outputs, runtime, sourceCode
+Their :import endpoint takes multipart/form-data whose field name is still
+UNRESOLVED, so import_functions refuses rather than guessing.
 """
 
 from __future__ import annotations
@@ -25,17 +39,23 @@ from .client import ApiError
 
 UNRESOLVED = "__UNRESOLVED__"
 
-# --- values resolved by scripts/probe.py; see docs/api-notes.md ---
-PROJECT_ID_MODE = "org_id"      # U1: projectId is the org id
-SUBFLOW_TYPE = "SUBFLOW"        # U2: confirmed by probe
+# U1 RESOLVED 2026-08-26: a fixed, tenant-independent project id. Verified
+# live - it returned 23 flows and 3 subflows on org davidwolgast-8xgo.
+FLOWS_PROJECT_ID = "5e5c9ad6d61f870d6d778c1b"
+
+# U2 RESOLVED 2026-08-26: SUBFLOW returns a set distinct from FLOW (3 vs 23).
+SUBFLOW_TYPE = "SUBFLOW"
 FLOW_TYPE = "FLOW"
 PAGE_SIZE = 100                 # the API default of 10 silently truncates
 
 
 def resolve_project_id(client) -> str:
-    if PROJECT_ID_MODE == "org_id":
-        return client.org_id
-    raise ApiError(f"unsupported PROJECT_ID_MODE {PROJECT_ID_MODE!r} - see U1")
+    """The flows project id.
+
+    Deliberately ignores the client: this value is the same on every tenant.
+    Kept as a function so a future tenant-specific discovery step has a seam.
+    """
+    return FLOWS_PROJECT_ID
 
 
 def _flow_list_path(project_id: str, flow_type: str) -> str:
@@ -46,9 +66,13 @@ def _flow_list_path(project_id: str, flow_type: str) -> str:
 
 
 def list_flows(client, project_id: str,
-                flow_type: str) -> tuple[list[dict], str | None]:
-    """List flows of one flowType. Never raises: a failure is returned, not
-    swallowed - a partial export must never look like a complete one."""
+               flow_type: str) -> tuple[list[dict], str | None]:
+    """List flows of one type. Never raises: a failure is RETURNED.
+
+    A silently-empty list would make a failed export indistinguishable from a
+    tenant with no flows, which is the failure mode this project exists to
+    avoid.
+    """
     try:
         return client.list_all(_flow_list_path(project_id, flow_type)), None
     except ApiError as exc:
@@ -70,25 +94,23 @@ def export_flow(client, project_id: str, flow_id: str,
     return body, None
 
 
-def export_all_flows(client, project_id: str) -> dict:
+def export_all_flows(client, project_id: str | None = None) -> dict:
+    """Export every flow and subflow. A listing failure is recorded, not hidden."""
+    project_id = project_id or FLOWS_PROJECT_ID
     out: dict = {"flows": {}, "subflows": {}, "errors": [],
                  "projectId": project_id}
     for bucket, flow_type in (("flows", FLOW_TYPE), ("subflows", SUBFLOW_TYPE)):
-        if flow_type == UNRESOLVED:
-            out["errors"].append(f"{bucket}: flowType unresolved - see U2 in "
-                                 "docs/api-notes.md")
-            continue
-        rows, list_err = list_flows(client, project_id, flow_type)
-        if list_err:
-            out["errors"].append(f"{bucket} ({flow_type}): listing failed - {list_err}")
+        rows, err = list_flows(client, project_id, flow_type)
+        if err:
+            out["errors"].append(f"listing {bucket} (flowType={flow_type}): {err}")
             continue
         for row in rows:
             flow_id = row.get("id")
             if not flow_id:
                 continue
-            doc, err = export_flow(client, project_id, flow_id, flow_type)
-            if err:
-                out["errors"].append(err)
+            doc, ferr = export_flow(client, project_id, flow_id, flow_type)
+            if ferr:
+                out["errors"].append(ferr)
             else:
                 out[bucket][flow_id] = {"meta": row, "document": doc}
     return out

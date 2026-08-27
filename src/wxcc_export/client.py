@@ -150,6 +150,15 @@ class ApiClient:
         Some Webex Calling endpoints return a bare array instead of meta+data;
         both shapes are accepted, anything else is an error rather than a
         silently-empty result.
+
+        Every Webex Calling collection wraps its list in its OWN envelope key
+        (autoAttendants, huntGroups, queues, ... - even a key not derivable
+        from the path, like paging -> "locationPaging"), so the key is
+        selected generically rather than from a hardcoded allowlist. "data"
+        (the Contact Center paginated shape) is still preferred when present,
+        so CC behaviour is unchanged. A dict with no list-valued key at all is
+        a live-observed empty Calling collection (e.g. announcements returns
+        a bare {} when empty), not an error, so it yields [].
         """
         records: list[dict] = []
         url = self.url(path)
@@ -161,12 +170,30 @@ class ApiClient:
             doc = json.loads(text) if text else {}
             if isinstance(doc, list):
                 return records + doc
+            if not isinstance(doc, dict):
+                raise ApiError(
+                    f"expected a list response from {path}, got "
+                    f"{type(doc).__name__}", status=status, path=path)
             data = doc.get("data")
             if data is None:
-                for key in ("items", "locations", "announcements"):
-                    if isinstance(doc.get(key), list):
-                        data = doc[key]
-                        break
+                list_keys = [k for k, v in doc.items()
+                             if k != "data" and isinstance(v, list)]
+                if not list_keys:
+                    data = []
+                elif len(list_keys) == 1:
+                    data = doc[list_keys[0]]
+                elif "items" in list_keys:
+                    # locations returns items + notFoundIds together - both are
+                    # lists, but notFoundIds is a sibling list of ids a batch
+                    # lookup couldn't find, not a second envelope of records.
+                    # "items" is the well-established Webex collection key, so
+                    # it wins over an unrecognised second list key.
+                    data = doc["items"]
+                else:
+                    raise ApiError(
+                        f"ambiguous list response from {path}, multiple "
+                        f"list-valued keys {sorted(list_keys)}",
+                        status=status, path=path)
             if not isinstance(data, list):
                 raise ApiError(
                     f"expected a list response from {path}, got keys "

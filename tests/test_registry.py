@@ -168,3 +168,13 @@ def test_every_calling_object_with_a_location_scoped_item_declares_the_placehold
             # Task 10 must resolve locationId even for scope == "org" objects,
             # by reading it out of the org-level list payload.
             assert spec["scope"] in ("org", "location"), name
+
+
+def test_call_queues_list_is_org_scoped_not_location_scoped():
+    # Probe-confirmed 2026-08-26 (docs/api-notes.md, U5 Defect 1):
+    # GET telephony/config/locations/{locationId}/queues -> 404
+    # GET telephony/config/queues                        -> 200 {"queues": []}
+    spec = registry.CALLING_OBJECTS["call-queues"]
+    assert "{locationId}" not in spec["list"]
+    assert spec["list"] == "telephony/config/queues"
+    assert spec["scope"] == "org"

@@ -11,6 +11,7 @@ Two rules this module exists to enforce:
 
 from __future__ import annotations
 
+import json as _json
 from dataclasses import dataclass, field
 
 from . import idmap as idmap_mod
@@ -173,10 +174,22 @@ from . import export_flows
 
 UNRESOLVED = "__UNRESOLVED__"
 
-# U3, from docs/api-notes.md. If the probe did not resolve it, leave the
-# sentinel: refusing is correct, guessing a field name is not.
-FUNCTION_IMPORT_FIELD = UNRESOLVED
-FUNCTION_IMPORT_FILENAME = "function.json"
+# U3 RESOLVED 2026-08-26 from a REAL successful import against the live tenant.
+# The multipart part is named "file", carries a .json FILENAME, and is typed
+# application/octet-stream - NOT application/json, which is what this file
+# originally sent. The endpoint takes `overwrite` as a query parameter.
+#   POST /v1/{orgId}/functions:import?overwrite=
+#   files: {"file": ("Copy_parse_call_data_6.json", <json bytes>,
+#                    "application/octet-stream")}
+FUNCTION_IMPORT_FIELD = "file"
+FUNCTION_IMPORT_PART_TYPE = "application/octet-stream"
+
+
+def function_import_filename(document: dict, fn_id: str) -> str:
+    """The uploaded part needs a .json filename; the API keys off it."""
+    name = str((document or {}).get("name") or fn_id or "function").strip()
+    safe = "".join(c if (c.isalnum() or c in "._-") else "_" for c in name)
+    return (safe or "function") + ".json"
 
 
 def import_flows(client, reader, bucket: str, idmap_: idmap_mod.IdMap,
@@ -229,9 +242,11 @@ def import_functions(client, reader, idmap_: idmap_mod.IdMap,
                      confirm: bool = False) -> ImportResult:
     """Import custom functions.
 
-    Export returns JSON but import takes multipart/form-data - the API is
-    asymmetric here. The part name comes from the live probe (U3); if it is
-    still the sentinel this refuses rather than guessing.
+    The API is asymmetric: export returns plain JSON, import takes
+    multipart/form-data. The exact shape is not guessed - it was taken from a
+    real successful import against the live tenant (U3, docs/api-notes.md):
+    one part named "file", with a .json filename, typed
+    application/octet-stream, carrying the exported document verbatim.
     """
     result = ImportResult(entity="flows:functions")
     functions = reader.functions()
@@ -241,21 +256,22 @@ def import_functions(client, reader, idmap_: idmap_mod.IdMap,
             result.failed.append({
                 "id": None,
                 "detail": "the multipart field name for functions:import is "
-                          "unresolved (U3 in docs/api-notes.md). Run "
-                          "scripts/probe.py; refusing to guess a field name."})
+                          "unresolved (U3 in docs/api-notes.md); refusing to "
+                          "guess a field name."})
         return result
 
     path = f"v1/{{orgId}}/functions:import?overwrite={str(overwrite).lower()}"
     for fn_id, payload in functions.items():
         document = idmap_.substitute((payload or {}).get("document") or {})
         result.dangling |= idmap_.unmapped(document)
+        filename = function_import_filename(document, fn_id)
         result.planned.append({"action": "create", "item": {"id": fn_id},
-                               "existing": None, "reason": "import function"})
+                               "existing": None,
+                               "reason": f"import function as {filename}"})
         if not confirm:
             continue
-        import json as _json
-        parts = [(FUNCTION_IMPORT_FIELD, FUNCTION_IMPORT_FILENAME,
-                  "application/json", _json.dumps(document).encode())]
+        parts = [(FUNCTION_IMPORT_FIELD, filename, FUNCTION_IMPORT_PART_TYPE,
+                  _json.dumps(document).encode())]
         try:
             status, body = client.multipart("POST", path, parts)
         except Exception as exc:

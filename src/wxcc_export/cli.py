@@ -82,20 +82,40 @@ def _clients(cfg: dict) -> tuple:
 
 def _run_export(cfg: dict, args) -> int:
     cc, wx = _clients(cfg)
-    info = tenant.org_info(cc)
+    info = tenant.org_info(cc, wx)
     print(f"Source tenant: {tenant.describe(info)}")
 
     entities = [e for e in registry.CC_ENTITIES]
     exported = export_cc.export_all(
         cc, entities,
         on_progress=lambda e, r: print(
-            f"  {e:24s} {r['count']:5d}" + (f"  ERROR {r['error']}" if r["error"] else "")))
+            f"  {e:24s} {r['count']:5d}" + (f"  ERROR {r['error']}" if r["error"] else "")),
+        org_created_ms=info["created_ms"])
 
     if args.only_non_default:
+        # The progress lines above printed PRE-filter counts, so report what
+        # the filter actually removed. Otherwise the terminal disagrees with
+        # the archive, and the operator trusts the wrong number.
+        dropped_total = 0
+        by_basis = {"systemDefault": 0, "createdTime-heuristic": 0}
         for result in exported.values():
-            result["items"] = [i for i in result["items"]
-                               if not i.get("likely_default")]
-            result["count"] = len(result["items"])
+            before = result["items"]
+            kept = [i for i in before if not i.get("likely_default")]
+            for i in before:
+                if i.get("likely_default"):
+                    basis = i.get("default_basis", "unknown")
+                    by_basis[basis] = by_basis.get(basis, 0) + 1
+            dropped = len(before) - len(kept)
+            if dropped:
+                print(f"  --only-non-default: {result['entity']} "
+                      f"{len(before)} -> {len(kept)} ({dropped} dropped)")
+            dropped_total += dropped
+            result["items"] = kept
+            result["count"] = len(kept)
+        print(f"  --only-non-default removed {dropped_total} object(s): "
+              f"{by_basis.get('systemDefault', 0)} by the API's systemDefault "
+              f"flag, {by_basis.get('createdTime-heuristic', 0)} INFERRED from "
+              "creation time (see docs/api-notes.md U4).")
 
     children = {}
     for entity in ("address-book", "outdial-ani"):
@@ -118,8 +138,11 @@ def _run_export(cfg: dict, args) -> int:
         record["error"] = (f"{record['error']}; {combined}"
                            if record.get("error") else combined)
 
-    project_id = export_flows.resolve_project_id(cc)
-    flows = export_flows.export_all_flows(cc, project_id)
+    # Flows are disabled by evidence (U1, docs/api-notes.md): the flows API
+    # is not served on the WxCC regional host at all, so there is no project
+    # id to resolve - resolve_project_id() would only raise. export_all_flows
+    # records that finding as an error and makes no HTTP call.
+    flows = export_flows.export_all_flows(cc, None)
     functions = export_flows.export_all_functions(cc)
     calling = export_calling.export_all(
         wx, on_progress=lambda n, r: print(
@@ -188,7 +211,7 @@ def _run_import(cfg: dict, args) -> int:
         return EXIT_USAGE
 
     cc, wx = _clients(cfg)
-    info = tenant.org_info(cc)
+    info = tenant.org_info(cc, wx)
     source_name = reader.manifest["source"].get("orgName")
 
     print(f"Source archive: {source_name}")
@@ -260,8 +283,9 @@ def _run_auth(cfg: dict, args) -> int:
     token, source = auth.valid_access_token(cfg)
     org_id = cfg["org_id"] or auth.extract_org_id(token)
     cc = client.ApiClient(cfg["api_base"], token, org_id=org_id)
+    wx = client.ApiClient(cfg["webex_base"], token, org_id=org_id)
     print(f"auth source: {source}")
-    print(f"tenant:      {tenant.describe(tenant.org_info(cc))}")
+    print(f"tenant:      {tenant.describe(tenant.org_info(cc, wx))}")
     return EXIT_OK
 
 

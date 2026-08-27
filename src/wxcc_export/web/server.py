@@ -81,7 +81,8 @@ def make_handler(cfg: dict, token: str, own_origin: str):
                     tok, source = auth.valid_access_token(cfg)
                     org_id = cfg["org_id"] or auth.extract_org_id(tok)
                     cc = client.ApiClient(cfg["api_base"], tok, org_id=org_id)
-                    info = tenant.org_info(cc)
+                    wx = client.ApiClient(cfg["webex_base"], tok, org_id=org_id)
+                    info = tenant.org_info(cc, wx)
                     return self._json(200, {"tenant": tenant.describe(info),
                                             "orgId": info["org_id"],
                                             "authSource": source})

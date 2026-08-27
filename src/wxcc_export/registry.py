@@ -160,6 +160,7 @@ CC_ENTITIES: dict[str, dict] = {
 CALLING_OBJECTS: dict[str, dict] = {
     "locations": {"list": "locations", "item": "locations/{id}",
                   "scope": "org", "writable": True},
+    # Probe-confirmed 2026-08-26 (docs/api-notes.md, U5 Defect 1): 200 OK.
     "schedules": {"list": "telephony/config/locations/{locationId}/schedules",
                   "item": "telephony/config/locations/{locationId}/schedules/{id}",
                   "scope": "location", "writable": True},
@@ -169,21 +170,24 @@ CALLING_OBJECTS: dict[str, dict] = {
     "hunt-groups": {"list": "telephony/config/huntGroups",
                     "item": "telephony/config/locations/{locationId}/huntGroups/{id}",
                     "scope": "org", "writable": True},
-    # UNCONFIRMED (U5): the OpenAPI document publishes no org-level or
-    # location-level LIST for call queues - only the item path. This list
-    # route is inferred from that item path and must be probe-confirmed.
-    "call-queues": {"list": "telephony/config/locations/{locationId}/queues",
+    # Probe-confirmed 2026-08-26 (docs/api-notes.md, U5 Defect 1): call queues
+    # are listed org-wide, not per location.
+    #   GET telephony/config/locations/{locationId}/queues -> 404
+    #   GET telephony/config/queues                         -> 200 {"queues": []}
+    "call-queues": {"list": "telephony/config/queues",
                     "item": "telephony/config/locations/{locationId}/queues/{id}",
-                    "scope": "location", "writable": True},
+                    "scope": "org", "writable": True},
     # UNCONFIRMED (U5): the location-scoped item route below is inferred.
     # The published location path for Call Park is .../callParks, which is a
     # DIFFERENT object (see "call-parks"). Probe before trusting.
     "call-park-extensions": {"list": "telephony/config/callParkExtensions",
                              "item": "telephony/config/locations/{locationId}/callParkExtensions/{id}",
                              "scope": "org", "writable": True},
+    # Probe-confirmed 2026-08-26 (docs/api-notes.md, U5 Defect 1): 200 OK.
     "call-parks": {"list": "telephony/config/locations/{locationId}/callParks",
                    "item": "telephony/config/locations/{locationId}/callParks/{id}",
                    "scope": "location", "writable": True},
+    # Probe-confirmed 2026-08-26 (docs/api-notes.md, U5 Defect 1): 200 OK.
     "call-pickups": {"list": "telephony/config/locations/{locationId}/callPickups",
                      "item": "telephony/config/locations/{locationId}/callPickups/{id}",
                      "scope": "location", "writable": True},

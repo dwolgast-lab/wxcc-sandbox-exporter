@@ -211,6 +211,49 @@ def test_import_dispatches_flows_functions_and_calling(monkeypatch):
         "calling:voicemail"}
 
 
+def _get(base_url, path, token=None):
+    req = urllib.request.Request(
+        base_url + path,
+        headers={**({"X-Session-Token": token} if token else {})})
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return resp.status, json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read())
+
+
+def test_api_tenant_passes_the_webex_client_to_org_info(monkeypatch):
+    # Without the webex client, tenant.org_info can't reach
+    # organizations/{orgId} and the tenant name silently falls back to the
+    # org id (tenant.py, U6).
+    captured = {}
+    monkeypatch.setattr(web.auth, "valid_access_token",
+                        lambda cfg: ("TOK", "bearer"))
+    monkeypatch.setattr(web.auth, "extract_org_id", lambda token: "O1")
+    monkeypatch.setattr(web.client, "ApiClient",
+                        lambda base, token, org_id=None: (base, "client"))
+
+    def fake_org_info(cc, wx=None):
+        captured["cc"], captured["wx"] = cc, wx
+        return {"org_id": "O1", "name": "Sandbox", "subscription": None,
+                "created_ms": None}
+
+    monkeypatch.setattr(web.tenant, "org_info", fake_org_info)
+
+    with running_server(CFG, token="TOK") as base:
+        status, body = _get(base, "/api/tenant", token="TOK")
+
+    assert status == 200, body
+    assert captured["cc"] == (CFG["api_base"], "client")
+    assert captured["wx"] == (CFG["webex_base"], "client")
+
+
+def test_api_tenant_requires_the_session_token():
+    with running_server(CFG, token="TOK") as base:
+        status, body = _get(base, "/api/tenant", token=None)
+    assert status == 403
+
+
 def test_import_requires_the_session_token(monkeypatch):
     calls = []
     monkeypatch.setattr(web.importer, "import_cc",

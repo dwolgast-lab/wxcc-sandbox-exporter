@@ -4,6 +4,7 @@ from wxcc_export.client import ApiClient
 
 BASE = "https://api.wxcc-us1.cisco.com"
 SUB = export_flows.SUBFLOW_TYPE
+PROJ = export_flows.FLOWS_PROJECT_ID
 
 
 class FakeReader:
@@ -36,7 +37,7 @@ def test_flow_dry_run_writes_nothing(transport):
 
 
 def test_confirmed_flow_import_posts_the_document(transport):
-    transport.add(f"POST /ORG1/project/ORG1/v2/flows:import"
+    transport.add(f"POST /ORG1/project/{PROJ}/v2/flows:import"
                   f"?overwrite=false&flowType=FLOW",
                   status=200, body={"id": "F9"})
     reader = FakeReader(flows={"f1": {"meta": {"name": "Main"},
@@ -47,7 +48,7 @@ def test_confirmed_flow_import_posts_the_document(transport):
 
 
 def test_flow_references_are_remapped(transport):
-    transport.add(f"POST /ORG1/project/ORG1/v2/flows:import"
+    transport.add(f"POST /ORG1/project/{PROJ}/v2/flows:import"
                   f"?overwrite=false&flowType=FLOW", status=200, body={"id": "F9"})
     m = idmap.IdMap()
     m.record("q1", "q9")
@@ -59,7 +60,7 @@ def test_flow_references_are_remapped(transport):
 
 
 def test_subflow_import_uses_the_probe_confirmed_flow_type(transport):
-    transport.add(f"POST /ORG1/project/ORG1/v2/flows:import"
+    transport.add(f"POST /ORG1/project/{PROJ}/v2/flows:import"
                   f"?overwrite=false&flowType={SUB}", status=200, body={"id": "S9"})
     reader = FakeReader(subflows={"s1": {"meta": {}, "document": {"name": "Sub"}}})
     res = importer.import_flows(make(transport), reader, "subflows",
@@ -69,7 +70,7 @@ def test_subflow_import_uses_the_probe_confirmed_flow_type(transport):
 
 
 def test_a_failed_flow_import_is_recorded(transport):
-    transport.add(f"POST /ORG1/project/ORG1/v2/flows:import"
+    transport.add(f"POST /ORG1/project/{PROJ}/v2/flows:import"
                   f"?overwrite=false&flowType=FLOW", status=400,
                   body={"message": "unknown activity"})
     reader = FakeReader(flows={"f1": {"meta": {"name": "Main"}, "document": {}}})
@@ -111,15 +112,40 @@ def test_function_import_refuses_when_the_field_name_is_unresolved(
     assert transport.calls == []
 
 
-def test_function_import_refuses_by_default_because_the_field_is_unresolved(
-        transport):
-    # No monkeypatch: the DEFAULT constant must be the sentinel, since the
-    # live probe for U3 has not run. A guessed field name is worse than a
-    # refusal - see the comment above FUNCTION_IMPORT_FIELD in importer.py.
+def test_function_import_field_is_the_confirmed_value():
+    """U3 was resolved from a REAL successful import against the live tenant.
+
+    The part is named "file", carries a .json filename, and is typed
+    application/octet-stream - NOT application/json, which is what this module
+    originally sent.
+    """
+    assert importer.FUNCTION_IMPORT_FIELD == "file"
+    assert importer.FUNCTION_IMPORT_PART_TYPE == "application/octet-stream"
+
+
+def test_function_import_sends_a_json_filename_and_octet_stream(transport):
+    transport.add("POST /v1/ORG1/functions:import?overwrite=false",
+                  status=200, body={"id": "FN9"})
+    reader = FakeReader(functions={"fn1": {"meta": {"name": "parse_call_data"},
+                                           "document": {"name": "parse_call_data",
+                                                        "sourceCode": "x"}}})
+    res = importer.import_functions(make(transport), reader, idmap.IdMap(),
+                                    confirm=True)
+    assert res.created == ["FN9"]
+    data = transport.calls[0]["data"]
+    assert b'name="file"' in data
+    assert b'filename="parse_call_data.json"' in data
+    assert b"application/octet-stream" in data
+
+
+def test_function_import_still_refuses_if_the_field_is_unset(transport, monkeypatch):
+    # The refusal path must survive, so a future unresolved value cannot
+    # silently become a guess.
+    monkeypatch.setattr(importer, "FUNCTION_IMPORT_FIELD", importer.UNRESOLVED)
     reader = FakeReader(functions={"fn1": {"meta": {}, "document": {}}})
     res = importer.import_functions(make(transport), reader, idmap.IdMap(),
                                     confirm=True)
-    assert "U3" in res.failed[0]["detail"]
+    assert "unresolved" in res.failed[0]["detail"]
     assert transport.calls == []
 
 
