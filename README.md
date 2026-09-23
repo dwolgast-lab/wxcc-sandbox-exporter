@@ -12,10 +12,15 @@ new one — never both at once, on purpose.
 
 Read this before you export anything you'd be upset to lose:
 
-- **Channels and Surveys have no API at all.** Not "not implemented yet" —
-  zero operations across all 328 Contact Center paths and all 61 tags in
-  Cisco's own OpenAPI document. Nothing can export or import them. Recreate
-  both by hand in Control Hub before the old tenant disappears.
+- **Surveys have no API at all.** Not "not implemented yet" — zero
+  operations across all 328 Contact Center paths and all 61 tags in Cisco's
+  own OpenAPI document. Nothing can export or import them. Recreate them by
+  hand in Control Hub before the old tenant disappears.
+- **Channels ARE captured** — an earlier version of this README said they
+  were not, and that was wrong. A Channel is not a separate resource: it is
+  an **entry point whose `channelType` is not `TELEPHONY`**. `EntryPointDTO`
+  carries `channelType`, `socialChannelType`, `assetId` and `subscriptionId`,
+  and the exporter sweeps every channel type. See §1a.
 - **Contact Center Users are export-only.** `/organization/{orgId}/user`
   publishes `GET` only — there is no create endpoint anywhere in the API.
   You get a `users.csv`/`users.json` reference manifest with every id
@@ -40,13 +45,17 @@ source of truth this tool's export/import walk is driven by) — not
 paraphrased. See the [user guide](docs/user-guide.md#1-what-this-does-and-does-not-do)
 for notes on each row.
 
-**Contact Center — 22 entities, 21 import-capable, 1 export-only**
+**Contact Center — 25 entities, 24 import-capable, 1 export-only**
 
 | Group | Entities |
 |---|---|
-| Customer Experience | `contact-service-queue`, `business-hours`, `holiday-list`, `overrides`, `audio-file`, `cad-variable`, `entry-point`, `dial-number` |
+| Customer Experience | `contact-service-queue`, `business-hours`, `holiday-list`, `overrides`, `audio-file`, `cad-variable`, `entry-point`, `dial-number`, `contact-number`, `dial-plan` |
 | User Management | `site`, `skill`, `skill-profile`, `team`, `user-profile`, `resource-collection`, `user` (**export-only — no create endpoint**) |
-| Desktop Experience | `multimedia-profile`, `outdial-ani`, `desktop-layout`, `address-book`, `agent-profile`, `auxiliary-code`, `work-type` |
+| Desktop Experience | `multimedia-profile`, `outdial-ani`, `desktop-layout`, `address-book`, `agent-profile`, `auxiliary-code`, `work-type`, `agent-personal-greeting` |
+
+`entry-point` is where **Channels** live — a Channel is an entry point whose
+`channelType` is not `TELEPHONY`. The exporter sweeps every channel type,
+because the unfiltered listing hides `systemInternal` rows.
 
 **Flows** — Flows, Subflows, Functions (export + import, subflows before flows)
 
@@ -57,7 +66,10 @@ Calling OAuth scopes not requested by the default `.env.example`)
 `call-park-extensions`, `call-parks`, `call-pickups`, `paging-groups`,
 `announcements`, `virtual-extensions`, `operating-modes`
 
-**No API exists for:** Channels, Surveys — see the callout above.
+**No API exists for:** Surveys — see the callout above.
+
+**Channels** are entry points with a non-`TELEPHONY` `channelType`, and are
+captured under `entry-point`. There is no separate Channels API to be missing.
 
 ## Quick start
 

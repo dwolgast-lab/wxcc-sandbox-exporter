@@ -82,10 +82,28 @@ each parses. Check with:
 `python -c "import json,glob;[json.load(open(f)) for f in glob.glob('flows/flows/*.json')];print('ok')"`
 **Observed:** ______________________  **PASS / FAIL**
 
-### B5 - UNSUPPORTED.md names Surveys and Channels
-**Expected:** `UNSUPPORTED.md` exists and explains why each cannot be captured.
+### B5 - UNSUPPORTED.md names Surveys, and does NOT claim Channels are missing
+**Expected:** `UNSUPPORTED.md` exists and explains why Surveys cannot be
+captured. It must NOT mention Channels: they are entry points with a
+non-`TELEPHONY` `channelType` and ARE in the archive. Telling a user their
+channels were lost when they were not is worse than saying nothing.
 **Observed:** ______________________  **PASS / FAIL**
 
+### B5a - Channels are actually captured
+Count the non-telephony entry points in Control Hub (Contact Center >
+Customer Experience > Channels), then:
+`python -c "import json,zipfile,collections;z=zipfile.ZipFile('<archive>');print(collections.Counter(i['channelType'] for i in json.loads(z.read('cc/entry-point.json'))['items']))"`
+**Expected:** the counts per `channelType` match Control Hub. A tenant with
+only telephony entry points is a valid result - record that if so.
+**Observed:** ______________________  **PASS / FAIL**
+
+### B5b - the channel sweep recovers systemInternal rows
+The unfiltered listing hides them. Compare:
+`GET v2/entry-point` vs `GET v2/entry-point?channelTypes=TELEPHONY`
+**Expected:** the archive's entry-point count equals the HIGHER of the two.
+On the reference tenant that was 11, not 10 - the extra being
+`Record_Agent_Greeting` (`systemInternal: true`).
+**Observed:** plain ____ filtered ____ archive ____  **PASS / FAIL**
 ### B6 - A partial export exits 3, not 0
 Temporarily narrow the Integration's scopes so one entity 403s, re-export.
 **Expected:** the run prints the failed object AND exits 3.

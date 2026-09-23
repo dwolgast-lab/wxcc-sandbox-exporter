@@ -285,12 +285,13 @@ CALLING_OBJECTS: dict[str, dict] = {
 SPEC_GROUPS: dict[str, list[str]] = {
     "Customer Experience": ["contact-service-queue", "business-hours",
                             "holiday-list", "overrides", "audio-file",
-                            "cad-variable", "entry-point", "dial-number"],
+                            "cad-variable", "entry-point", "dial-number",
+                            "contact-number", "dial-plan"],
     "User Management": ["site", "skill", "skill-profile", "team",
                         "user-profile", "resource-collection", "user"],
     "Desktop Experience": ["multimedia-profile", "outdial-ani", "desktop-layout",
                            "address-book", "agent-profile", "auxiliary-code",
-                           "work-type"],
+                           "work-type", "agent-personal-greeting"],
 }
 
 SPEC_OBJECT_MAP: dict[str, str] = {

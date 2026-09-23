@@ -56,13 +56,40 @@ are recorded so a re-execution does not reintroduce them.
 depend on reusing that map — a flow routing to queue `q1` needs the `q1 → q9`
 mapping the CC pass recorded.
 
-### Still unverified against a live tenant
+### Resolved and corrected against a live tenant (2026-09-23)
 
-**No code in this repository has called a real Webex API.** Task 5 has not run.
-`PROJECT_ID_MODE`, `SUBFLOW_TYPE`, `FUNCTION_IMPORT_FIELD`, the Calling
-`_locationId` candidate-field list, and both `UNCONFIRMED` Calling routes are all
-provisional. Run `scripts/probe.py` and record the answers in `docs/api-notes.md`
-before trusting any of them.
+Everything this plan marked UNCONFIRMED has now been probed, and several of the
+plan's own confirmed-sounding claims turned out to be wrong.
+
+| plan said | actually |
+|---|---|
+| U1 flows `projectId` unresolved | **fixed constant `5e5c9ad6d61f870d6d778c1b`**, identical on every tenant. An interim revision wrongly concluded the flows API was unreachable; the probe had been passing a 36-char org UUID where the route only matches a 24-char hex ObjectId. |
+| U2 `flowType` for subflows unknown | **`SUBFLOW`** - the plan's provisional guess was right, just untestable until U1 was solved |
+| U3 functions import field unknown | **part `file`, `.json` filename, `application/octet-stream`** - from a real successful import, not the spec |
+| "Channels have no API" | **WRONG.** A Channel is an entry point with a non-`TELEPHONY` `channelType`; the exporter always captured them |
+| "no `isDefault` flag on any entity" | **WRONG.** `systemDefault` exists on 14 of 25 entities and is strictly better than the createdTime heuristic |
+| 22 CC entities | **25** - `contact-number`, `dial-plan`, `agent-personal-greeting` were missing; two held real data |
+| create field names | four were invented (`timeZone`, `type`, `number`, `active`) and 14 lists were incomplete |
+| `entry-point` depends on `dial-number` | **inverted** - a dial-number carries `entryPointId` |
+
+**The plan's provenance claim was also false.** `registry.py` says its route
+facts were "cross-checked against the live-verified registry in the sibling
+wxcc-skills repo." For the create lists that never happened: the sibling had
+every one of the four values right.
+
+`docs/api-notes.md` is the authoritative record. Where this plan and that file
+disagree, **the probe wins**.
+
+### Still unverified
+
+- **No import has ever run against a real tenant.** The whole import path is
+  tested only against fake transports.
+- **Audio re-upload on import is not implemented** - the importer has no blob
+  handling, so an imported audio-file row would carry metadata and no bytes.
+- **The channel sweep has never seen a digital entry point.** The reference
+  tenant had none; the union logic is exercised by tests only.
+- **`agent-personal-greeting`'s record shape and binary route are unknown** -
+  the reference tenant had none.
 
 ---
 

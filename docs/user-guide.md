@@ -16,13 +16,13 @@ you are the one who has to know that *before* the old tenant is gone.
 
 | Object | Export | Import | Note |
 |---|---|---|---|
-| Contact Center config (22 entities — see [§1a](#1a-the-22-contact-center-entities)) | yes | yes | dependency-ordered, ids remapped |
+| Contact Center config (25 entities — see [§1a](#1a-the-25-contact-center-entities)) | yes | yes | dependency-ordered, ids remapped |
 | Flows and Subflows | yes | yes | subflows are imported before flows; the project id and the flowType that selects a Subflow are tenant-specific facts recorded in `docs/api-notes.md` (see the callout below) |
 | Functions | yes | yes | export returns JSON; import requires `multipart/form-data` — the two are asymmetric on Cisco's side, not a quirk of this tool. The multipart field name is also recorded in `docs/api-notes.md` |
 | Audio Files | yes | **partial** | the audio bytes ARE captured in the archive under `cc/audio/`, but re-uploading them on import is not implemented as multipart — see [§10](#10-troubleshooting) |
 | Contact Center Users | yes | **no** | `/organization/{orgId}/user` publishes `GET` only — there is no `POST`. Invite and license each person in Control Hub, then use `users/users.csv` to reapply their site/team/profile/skill assignments by hand ([§8](#8-users-the-manual-step)) |
 | Webex Calling (12 objects — see [§1b](#1b-the-12-webex-calling-objects)) | yes | yes | location-scoped; needs Calling OAuth scopes that the shipped `.env.example` does not request by default |
-| **Channels** | **no** | **no** | no API operation exists anywhere in the Webex Contact Center OpenAPI document — 328 paths and 61 tags were searched, none named `channel`. Digital channels live in Webex Connect, a separate platform. Recreate by hand in Control Hub under Contact Center > Customer Experience > Channels |
+| **Channels** | yes | yes | **captured as entry points.** A Channel is not a separate resource — it is an entry point whose `channelType` is not `TELEPHONY` (`EMAIL`, `CHAT`, `SOCIAL_CHANNEL`, `VIDEO`, `FAX`, `CUSTOM_MESSAGING`, `WORK_ITEM`, `OTHERS`). `EntryPointDTO` carries `channelType`, `socialChannelType`, `assetId`, `subscriptionId`. The exporter sweeps every channel type, because the unfiltered listing hides `systemInternal` rows — on a live tenant it returned 10 entry points while `?channelTypes=TELEPHONY` returned 11. An earlier version of this guide said Channels had no API; that was wrong |
 | **Surveys** | **no** | **no** | same search, same result — no `survey` operation exists. The nearest published feature is Auto CSAT, which is AI-generated scoring, not the Surveys page, and is not a substitute. Recreate by hand in Control Hub under Contact Center > Customer Experience > Surveys |
 
 > **Before you trust Flows, Functions, or two of the Calling objects with a
@@ -41,11 +41,11 @@ you are the one who has to know that *before* the old tenant is gone.
 > point this at a tenant you care about. A `404` on flows or a Calling object
 > that never appears is the visible symptom — see [§10](#10-troubleshooting).
 
-### 1a. The 22 Contact Center entities
+### 1a. The 25 Contact Center entities
 
 This is the entity list from `src/wxcc_export/registry.py`, transcribed, not
-paraphrased. All 22 export; 21 import (create + update); `user` is
-export-only.
+paraphrased. All 25 export; 24 import (create + update); `user` is
+export-only, because its collection publishes `GET` only.
 
 **Customer Experience**
 
@@ -57,8 +57,10 @@ export-only.
 | `overrides` | (Business Hours dependency) | yes |
 | `audio-file` | Audio Files | yes — see the partial-import note above |
 | `cad-variable` | Global Variables | yes |
-| `entry-point` | (Queue dependency) | yes |
+| `entry-point` | **Channels** + (Queue dependency) | yes — swept across every `channelType` |
 | `dial-number` | (Entry Point dependency) | yes |
+| `contact-number` | Contact Numbers | yes — identity is `number`, not `name` |
+| `dial-plan` | Dial Plans | yes — both rows on a probed tenant were `systemDefault` |
 
 **User Management**
 
@@ -70,19 +72,24 @@ export-only.
 | `team` | Teams | yes |
 | `user-profile` | User Profiles | yes |
 | `resource-collection` | Resource Collections | yes |
-| `user` | Contact Center Users | **no — GET only** |
+| `user` | Contact Center Users | **no** — no create endpoint |
 
 **Desktop Experience**
 
 | Entity (API name) | Spec label | Writable |
 |---|---|---|
 | `multimedia-profile` | Multimedia Profiles | yes |
-| `outdial-ani` | Outdial ANI | yes (has child entries) |
+| `outdial-ani` | Outdial ANI | yes |
 | `desktop-layout` | Desktop Layouts | yes |
-| `address-book` | Address Books | yes (has child entries) |
+| `address-book` | Address Books | yes |
 | `agent-profile` | Desktop Profiles | yes |
 | `auxiliary-code` | Idle/Wrap-up Codes | yes |
-| `work-type` | (Idle/Wrap-up Code dependency) | yes |
+| `work-type` | (Aux Code dependency) | yes |
+| `agent-personal-greeting` | Agent Personal Greetings | yes — **shape unverified**, the probed tenant had none |
+
+Three of these — `contact-number`, `dial-plan`, `agent-personal-greeting` —
+were added on 2026-09-23 after a live probe found the exporter was silently
+missing them. Two held real data.
 
 ### 1b. The 12 Webex Calling objects
 
@@ -210,7 +217,7 @@ What happens, in order:
 1. The tool resolves and prints the source tenant (name, org id, and
    whether it's tagged `PRODUCTION` or `trial/sandbox`, from the tenant's
    own `organization/{orgId}` record — never from a label you configured).
-2. It walks all 22 Contact Center entities, the Flows/Subflows/Functions
+2. It walks all 25 Contact Center entities, the Flows/Subflows/Functions
    buckets, and the 12 Calling objects, printing a running count per object.
 3. It writes `<orgName>-export.zip` into the current directory (override
    the destination directory with `--out DIR`; the filename itself is not
