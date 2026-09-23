@@ -84,11 +84,49 @@ def tag_likely_defaults(items: list[dict], org_created_ms: int | float | None = 
             for i in items]
 
 
+def _list_entity(client, entity: str) -> list[dict]:
+    """List one entity, sweeping a filter when the plain listing is incomplete.
+
+    entry-point's unfiltered listing HIDES systemInternal rows: on a live
+    tenant it returned 10 while ?channelTypes=TELEPHONY returned 11. Sweeping
+    each declared filter value and unioning by id is the only listing shape
+    observed to return everything. Entities without a `list_sweep` take the
+    single plain call.
+    """
+    spec = registry.CC_ENTITIES.get(entity, {})
+    sweep = spec.get("list_sweep")
+    base = registry.list_path(entity)
+    if not sweep:
+        return client.list_all(base)
+
+    seen: dict[str, dict] = {}
+    order: list[dict] = []
+    # The plain listing first, so a row the sweep somehow misses is still kept.
+    for row in client.list_all(base):
+        rid = row.get("id")
+        if rid and rid not in seen:
+            seen[rid] = row
+            order.append(row)
+    for value in sweep["values"]:
+        sep = "&" if "?" in base else "?"
+        try:
+            rows = client.list_all(f"{base}{sep}{sweep['param']}={value}&pageSize=100")
+        except Exception:
+            # One filter value failing must not lose the others.
+            continue
+        for row in rows:
+            rid = row.get("id")
+            if rid and rid not in seen:
+                seen[rid] = row
+                order.append(row)
+    return order
+
+
 def export_entity(client, entity: str, org_created_ms: int | float | None = None) -> dict:
     """Export one entity. Never raises: a failure is recorded and returned."""
     result: dict = {"entity": entity, "count": 0, "items": [], "error": None}
     try:
-        raw = client.list_all(registry.list_path(entity))
+        raw = _list_entity(client, entity)
     except ApiError as exc:
         result["error"] = f"HTTP {exc.status}: {str(exc)[:200]}"
         return result

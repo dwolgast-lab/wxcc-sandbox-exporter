@@ -86,11 +86,42 @@ def test_user_is_not_writable():
     assert registry.CC_ENTITIES["user"]["writable"] is False
 
 
-def test_surveys_and_channels_are_declared_unsupported_with_a_reason():
-    for obj in ("Surveys", "Channels"):
-        assert obj in registry.UNSUPPORTED
-        assert len(registry.UNSUPPORTED[obj]) > 30
+def test_only_surveys_is_declared_unsupported():
+    """Channels was wrongly listed here.
 
+    The original claim came from searching for paths and tags named "channel",
+    which found nothing - because a Channel is not a separate resource. It is
+    an ENTRY POINT whose channelType is not TELEPHONY, and the exporter has
+    always captured them through the entry-point entity.
+    """
+    assert set(registry.UNSUPPORTED) == {"Surveys"}
+    assert len(registry.UNSUPPORTED["Surveys"]) > 30
+
+
+def test_channels_map_to_the_entry_point_entity():
+    assert registry.SPEC_OBJECT_MAP["Channels"] == "entry-point"
+
+
+def test_entry_point_sweeps_every_channel_type():
+    """The unfiltered listing hides systemInternal rows.
+
+    Observed live: the plain listing returned 10 entry points while
+    ?channelTypes=TELEPHONY returned 11 - the extra being
+    Record_Agent_Greeting (systemInternal: true).
+    """
+    sweep = registry.CC_ENTITIES["entry-point"]["list_sweep"]
+    assert sweep["param"] == "channelTypes"
+    # Every value the EntryPointDTO / queue enums publish.
+    assert set(sweep["values"]) >= {
+        "TELEPHONY", "EMAIL", "CHAT", "SOCIAL_CHANNEL", "VIDEO", "FAX",
+        "OTHERS", "CUSTOM_MESSAGING", "WORK_ITEM"}
+
+
+def test_no_other_entity_declares_a_sweep_it_cannot_use():
+    for name, spec in registry.CC_ENTITIES.items():
+        sweep = spec.get("list_sweep")
+        if sweep:
+            assert "param" in sweep and sweep.get("values"), name
 
 def test_calling_objects_declare_their_scope():
     for name, spec in registry.CALLING_OBJECTS.items():

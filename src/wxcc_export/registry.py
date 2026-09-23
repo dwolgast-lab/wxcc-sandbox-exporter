@@ -143,6 +143,21 @@ CC_ENTITIES: dict[str, dict] = {
     },
     "entry-point": {
         "list": "v2/entry-point", "item": "entry-point/{id}",
+        # CHANNELS LIVE HERE. A "Channel" in Control Hub is an entry point with
+        # a non-TELEPHONY channelType - there is no separate Channels API.
+        # Confirmed 2026-09-23: EntryPointDTO carries channelType,
+        # socialChannelType, assetId, subscriptionId, imiOrgType.
+        #
+        # The UNFILTERED listing hides systemInternal rows: on the probed
+        # tenant it returned 10 while ?channelTypes=TELEPHONY returned 11, the
+        # extra being Record_Agent_Greeting (systemInternal: true). Sweeping
+        # each channelType explicitly and unioning by id is the only listing
+        # shape observed to return everything.
+        "list_sweep": {
+            "param": "channelTypes",
+            "values": ["TELEPHONY", "EMAIL", "CHAT", "SOCIAL_CHANNEL", "VIDEO",
+                       "FAX", "OTHERS", "CUSTOM_MESSAGING", "WORK_ITEM"],
+        },
         "create": ["name", "entryPointType", "channelType",
                    "serviceLevelThreshold", "active", "maximumActiveContacts"],
         "deps": ["dial-number"], "writable": True,
@@ -248,6 +263,8 @@ SPEC_GROUPS: dict[str, list[str]] = {
 }
 
 SPEC_OBJECT_MAP: dict[str, str] = {
+    # A Channel is an entry point with a non-TELEPHONY channelType.
+    "Channels": "entry-point",
     "Queues": "contact-service-queue",
     "Business Hours": "business-hours",
     "Audio Files": "audio-file",
@@ -270,14 +287,12 @@ SPEC_OBJECT_MAP: dict[str, str] = {
     "Functions": "__functions__",
 }
 
+# CORRECTION 2026-09-23: "Channels" was previously listed here as having no
+# API. That was WRONG - it came from searching for paths and tags named
+# "channel", which found nothing because channels are not a separate resource.
+# A Channel is an ENTRY POINT whose channelType is not TELEPHONY, and the
+# exporter has always captured them via the entry-point entity.
 UNSUPPORTED: dict[str, str] = {
-    "Channels": (
-        "No Channels operation exists anywhere in the Webex Contact Center API "
-        "(searched all 328 paths and all 61 tags). Digital channels are "
-        "provisioned through Webex Connect, a separate platform with its own "
-        "API and its own tenant. Recreate them by hand in Control Hub under "
-        "Contact Center > Customer Experience > Channels."
-    ),
     "Surveys": (
         "No Surveys operation exists anywhere in the Webex Contact Center API "
         "(searched all 328 paths and all 61 tags). The nearest published "

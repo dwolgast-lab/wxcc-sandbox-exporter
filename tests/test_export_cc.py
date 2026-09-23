@@ -254,3 +254,73 @@ def test_default_code_is_not_confused_with_system_default():
     out = export_cc.tag_likely_defaults(items, ORG_CREATED_MS)
     assert out[0]["likely_default"] is True
     assert out[0]["defaultCode"] is False
+
+
+# --- entry-point channel sweep ----------------------------------------------
+
+def test_sweep_unions_rows_the_plain_listing_hides(transport):
+    """Live: plain listing gave 10 entry points, channelTypes=TELEPHONY gave 11.
+
+    The hidden row was systemInternal. The sweep must recover it.
+    """
+    base = "GET /organization/ORG1/v2/entry-point"
+    transport.add(base, body={"data": [{"id": "ep1", "name": "Visible",
+                                        "channelType": "TELEPHONY"}]})
+    transport.add(f"{base}?channelTypes=TELEPHONY&pageSize=100",
+                  body={"data": [{"id": "ep1", "name": "Visible",
+                                  "channelType": "TELEPHONY"},
+                                 {"id": "ep2", "name": "Record_Agent_Greeting",
+                                  "channelType": "TELEPHONY",
+                                  "systemInternal": True}]})
+    for ct in ("EMAIL","CHAT","SOCIAL_CHANNEL","VIDEO","FAX","OTHERS",
+               "CUSTOM_MESSAGING","WORK_ITEM"):
+        transport.add(f"{base}?channelTypes={ct}&pageSize=100", body={"data": []})
+    out = export_cc.export_entity(make(transport), "entry-point")
+    assert out["count"] == 2
+    assert {i["id"] for i in out["items"]} == {"ep1", "ep2"}
+
+
+def test_sweep_picks_up_a_digital_channel_entry_point(transport):
+    # A Channel IS an entry point with a non-TELEPHONY channelType.
+    base = "GET /organization/ORG1/v2/entry-point"
+    transport.add(base, body={"data": []})
+    transport.add(f"{base}?channelTypes=TELEPHONY&pageSize=100", body={"data": []})
+    transport.add(f"{base}?channelTypes=EMAIL&pageSize=100",
+                  body={"data": [{"id": "ep9", "name": "Support Email",
+                                  "channelType": "EMAIL"}]})
+    for ct in ("CHAT","SOCIAL_CHANNEL","VIDEO","FAX","OTHERS",
+               "CUSTOM_MESSAGING","WORK_ITEM"):
+        transport.add(f"{base}?channelTypes={ct}&pageSize=100", body={"data": []})
+    out = export_cc.export_entity(make(transport), "entry-point")
+    assert [i["channelType"] for i in out["items"]] == ["EMAIL"]
+
+
+def test_sweep_does_not_duplicate_a_row_seen_twice(transport):
+    base = "GET /organization/ORG1/v2/entry-point"
+    row = {"id": "ep1", "name": "Dup", "channelType": "TELEPHONY"}
+    transport.add(base, body={"data": [row]})
+    for ct in ("TELEPHONY","EMAIL","CHAT","SOCIAL_CHANNEL","VIDEO","FAX",
+               "OTHERS","CUSTOM_MESSAGING","WORK_ITEM"):
+        transport.add(f"{base}?channelTypes={ct}&pageSize=100", body={"data": [row]})
+    out = export_cc.export_entity(make(transport), "entry-point")
+    assert out["count"] == 1
+
+
+def test_one_failing_filter_value_does_not_lose_the_others(transport):
+    base = "GET /organization/ORG1/v2/entry-point"
+    transport.add(base, body={"data": []})
+    transport.add(f"{base}?channelTypes=TELEPHONY&pageSize=100", status=500, body={})
+    transport.add(f"{base}?channelTypes=EMAIL&pageSize=100",
+                  body={"data": [{"id": "ep9", "channelType": "EMAIL"}]})
+    for ct in ("CHAT","SOCIAL_CHANNEL","VIDEO","FAX","OTHERS",
+               "CUSTOM_MESSAGING","WORK_ITEM"):
+        transport.add(f"{base}?channelTypes={ct}&pageSize=100", body={"data": []})
+    out = export_cc.export_entity(make(transport), "entry-point")
+    assert out["count"] == 1
+
+
+def test_an_entity_without_a_sweep_makes_one_plain_call(transport):
+    transport.add("GET /organization/ORG1/v2/site",
+                  body={"data": [{"id": "s1", "name": "A"}]})
+    export_cc.export_entity(make(transport), "site")
+    assert len(transport.calls) == 1

@@ -48,14 +48,23 @@ def test_manifest_lists_every_error():
 
 
 def test_manifest_names_the_unsupported_objects():
+    # Channels was removed from this list on 2026-09-23: it is not a separate
+    # resource, it is an entry point with a non-TELEPHONY channelType, and the
+    # exporter captures it. Surveys genuinely has no API.
     m = archive.build_manifest({}, {}, [])
-    assert set(m["unsupported"]) == {"Channels", "Surveys"}
+    assert set(m["unsupported"]) == {"Surveys"}
 
 
 def test_unsupported_md_explains_each_object():
     text = archive.render_unsupported([])
-    assert "Channels" in text and "Surveys" in text
-    assert "Webex Connect" in text          # the actual reason, not a shrug
+    assert "Surveys" in text
+    assert "Control Hub" in text             # the actual reason, not a shrug
+
+
+def test_unsupported_md_does_not_claim_channels_are_missing():
+    # It used to. Telling a user their channels were not captured, when they
+    # were, is worse than saying nothing.
+    assert "Channels" not in archive.render_unsupported([])
 
 
 def test_unsupported_md_also_lists_runtime_errors():
