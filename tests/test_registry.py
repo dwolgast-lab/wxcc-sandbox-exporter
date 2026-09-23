@@ -235,7 +235,31 @@ def test_skill_profile_has_no_active_field():
 
 
 def test_dial_number_uses_dialled_number():
-    assert registry.CC_ENTITIES["dial-number"]["create"] == ["dialledNumber"]
+    c = registry.CC_ENTITIES["dial-number"]["create"]
+    assert "dialledNumber" in c and "number" not in c
+    # entryPointId being a create field is itself the proof that a dial number
+    # points AT an entry point, not the other way round.
+    assert "entryPointId" in c
+
+
+def test_create_lists_match_the_live_verified_sibling_registry():
+    """These are documentation, not payload builders - nothing in src/ reads
+    them - but wrong documentation is how the dependency inversion survived.
+
+    Spot-checks against wxcc-skills/mcp_server.py, which was built with real
+    writes against a live tenant.
+    """
+    expect = {
+        "business-hours": {"name", "timezone", "workingHours"},
+        "skill": {"name", "serviceLevelThreshold", "skillType", "active"},
+        "skill-profile": {"name"},
+        "user-profile": {"name", "profileType", "permissionAccessLevel",
+                         "resourceAccessLevel", "active"},
+        "overrides": {"name", "timezone", "overrides"},
+        "holiday-list": {"name", "holidays"},
+    }
+    for ent, fields in expect.items():
+        assert set(registry.CC_ENTITIES[ent]["create"]) == fields, ent
 
 
 # --- the dependency graph the API's own incoming-references reports ---------

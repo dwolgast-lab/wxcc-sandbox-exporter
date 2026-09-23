@@ -13,6 +13,14 @@ v2/v3; the ITEM path and the CREATE path DROP it. `GET v2/team` lists, but
 from __future__ import annotations
 
 
+# NOTE ON `create`: this list is DOCUMENTATION ONLY. Nothing in src/ reads it -
+# the importer sends the whole exported record minus identity fields, so a wrong
+# or short list here never reaches the wire. It exists so a human can see what a
+# create needs. `deps`, by contrast, IS load-bearing: plan.order_entities uses it.
+# These lists are taken from the sibling wxcc-skills repo's registry, which was
+# built against a live tenant with real writes.
+
+
 class UnknownEntity(Exception):
     """The entity name is not in the registry at all."""
 
@@ -30,7 +38,9 @@ CC_ENTITIES: dict[str, dict] = {
     # --- no dependencies ---
     "multimedia-profile": {
         "list": "v2/multimedia-profile", "item": "multimedia-profile/{id}",
-        "create": ["name", "active"], "deps": [], "writable": True,
+        "create": ["name", "active", "telephony", "chat", "email", "social",
+                   "blendingMode", "blendingModeEnabled",
+                   "manuallyAssignable"], "deps": [], "writable": True,
     },
     "work-type": {
         "list": "v2/work-type", "item": "work-type/{id}",
@@ -45,20 +55,21 @@ CC_ENTITIES: dict[str, dict] = {
     },
     "holiday-list": {
         "list": "v2/holiday-list", "item": "holiday-list/{id}",
-        "create": ["name"], "deps": [], "writable": True,
+        "create": ["name", "holidays"], "deps": [], "writable": True,
     },
     "overrides": {
         "list": "v2/overrides", "item": "overrides/{id}",
-        "create": ["name"], "deps": [], "writable": True,
+        "create": ["name", "timezone", "overrides"], "deps": [], "writable": True,
     },
     "cad-variable": {
         "list": "v2/cad-variable", "item": "cad-variable/{id}",
-        "create": ["name", "active", "variableType"], "deps": [], "writable": True,
+        "create": ["name", "variableType", "defaultValue", "active",
+                   "agentEditable", "agentViewable", "reportable"], "deps": [], "writable": True,
         "note": "These are the Global Variables in the Control Hub UI.",
     },
     "resource-collection": {
         "list": "v2/resource-collection", "item": "resource-collection/{id}",
-        "create": ["name"], "deps": [], "writable": True,
+        "create": ["name", "resources"], "deps": [], "writable": True,
     },
     "dial-number": {
         "list": "v2/dial-number", "item": "dial-number/{id}",
@@ -68,7 +79,7 @@ CC_ENTITIES: dict[str, dict] = {
         # so the ENTRY POINT must exist first. The registry previously had
         # entry-point depending on dial-number, which would have created every
         # dial-number before its target existed and dangled the reference.
-        "create": ["dialledNumber"], "deps": ["entry-point"], "writable": True,
+        "create": ["dialledNumber", "entryPointId", "location", "regionId"], "deps": ["entry-point"], "writable": True,
     },
     # Added 2026-09-23 after a live probe found these carried real data that
     # the exporter was silently missing. contact-number held one user-created
@@ -94,7 +105,7 @@ CC_ENTITIES: dict[str, dict] = {
     "agent-personal-greeting": {
         "list": "v3/agent-personal-greeting",
         "item": "agent-personal-greeting/{id}",
-        "create": ["name"], "deps": [], "writable": True, "binary": True,
+        "create": ["name", "contentType", "agentId", "greetingPurposeId"], "deps": [], "writable": True, "binary": True,
         "note": "EMPTY on the probed tenant, so its record shape and its "
                 "binary download route are BOTH UNVERIFIED. It carries audio "
                 "like audio-file does; if a tenant has greetings, expect the "
@@ -102,17 +113,18 @@ CC_ENTITIES: dict[str, dict] = {
     },
     "audio-file": {
         "list": "v2/audio-file", "item": "audio-file/{id}",
-        "create": ["name"], "deps": [], "writable": True, "binary": True,
+        "create": ["name", "contentType"], "deps": [], "writable": True, "binary": True,
         "note": "Upload is multipart/form-data. The spec claims audio-file "
                 "accepts JSON; the sibling repo records that it does not.",
     },
     "desktop-layout": {
         "list": "v2/desktop-layout", "item": "desktop-layout/{id}",
-        "create": ["name"], "deps": [], "writable": True,
+        "create": ["name", "jsonFileName", "jsonFileContent",
+                   "defaultJsonModified", "status", "editedBy"], "deps": [], "writable": True,
     },
     "address-book": {
         "list": "v2/address-book", "item": "address-book/{id}",
-        "create": ["name"], "deps": [], "writable": True,
+        "create": ["name", "parentType"], "deps": [], "writable": True,
         "child": {"list": "v2/address-book/{parentId}/entry",
                   "create": "address-book/{parentId}/entry"},
     },
@@ -120,7 +132,7 @@ CC_ENTITIES: dict[str, dict] = {
         "list": "v2/outdial-ani", "item": "outdial-ani/{id}",
         # VERIFIED 2026-09-23: dial-number/{id}/incoming-references reports
         # ['outdial-ani'], so dial numbers must exist first.
-        "create": ["name"], "deps": ["dial-number"], "writable": True,
+        "create": ["name", "outdialANIEntries"], "deps": ["dial-number"], "writable": True,
         "child": {"list": "v2/outdial-ani/{parentId}/entry",
                   "create": "outdial-ani/{parentId}/entry"},
     },
@@ -128,7 +140,8 @@ CC_ENTITIES: dict[str, dict] = {
         "list": "v3/user-profile", "item": "user-profile/{id}",
         # VERIFIED 2026-09-23: resource-collection/{id}/incoming-references
         # reports ['user-profile'], so the collection must exist first.
-        "create": ["name", "profileType"], "deps": ["resource-collection"],
+        "create": ["name", "profileType", "permissionAccessLevel",
+                   "resourceAccessLevel", "active"], "deps": ["resource-collection"],
         "writable": True,
     },
 
@@ -141,7 +154,7 @@ CC_ENTITIES: dict[str, dict] = {
     },
     "auxiliary-code": {
         "list": "v2/auxiliary-code", "item": "auxiliary-code/{id}",
-        "create": ["name", "active", "workTypeId", "defaultCode"],
+        "create": ["active", "name", "workTypeCode", "defaultCode", "workTypeId"],
         "deps": ["work-type"], "writable": True,
         "note": "These are the Idle and Wrap-up codes in the UI.",
     },
@@ -155,7 +168,7 @@ CC_ENTITIES: dict[str, dict] = {
         "list": "v2/business-hours", "item": "business-hours/{id}",
         # VERIFIED 2026-09-23: the field is "timezone" (lowercase z), not
         # "timeZone". The old spelling would have 400d on every create.
-        "create": ["name", "timezone"], "deps": ["holiday-list", "overrides"],
+        "create": ["name", "timezone", "workingHours"], "deps": ["holiday-list", "overrides"],
         "writable": True,
     },
     "entry-point": {
