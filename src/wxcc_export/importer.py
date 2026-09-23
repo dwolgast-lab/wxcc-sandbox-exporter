@@ -85,7 +85,8 @@ def import_entity(client, entity: str, items: list[dict],
         return result
 
     existing = plan.index_existing(client, entity)
-    result.planned = plan.classify(items, existing, on_conflict)
+    result.planned = plan.classify(items, existing, on_conflict,
+                                   registry.name_field(entity))
 
     for step in result.planned:
         source = step["item"]

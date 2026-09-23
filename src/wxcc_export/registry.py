@@ -62,6 +62,36 @@ CC_ENTITIES: dict[str, dict] = {
         "list": "v2/dial-number", "item": "dial-number/{id}",
         "create": ["number"], "deps": [], "writable": True,
     },
+    # Added 2026-09-23 after a live probe found these carried real data that
+    # the exporter was silently missing. contact-number held one user-created
+    # row; dial-plan held two (both systemDefault). Confirmed against
+    # davidwolgast-8xgo before its sandbox expired.
+    "contact-number": {
+        "list": "v2/contact-number", "item": "contact-number/{id}",
+        "create": ["number"], "deps": [], "writable": True,
+        # This entity has NO `name` field - identity is the phone number - so
+        # collision detection has to key off `number` or every row looks
+        # nameless and gets skipped.
+        "name_field": "number",
+        "note": "Observed record: {id, number, links, createdTime, "
+                "lastUpdatedTime}. No name, no systemDefault.",
+    },
+    "dial-plan": {
+        "list": "v2/dial-plan", "item": "dial-plan/{id}",
+        "create": ["name", "regularExpression", "active"], "deps": [],
+        "writable": True,
+        "note": "Both rows on the probed tenant were systemDefault:true "
+                "(US, Any Format), so an import will normally skip them.",
+    },
+    "agent-personal-greeting": {
+        "list": "v3/agent-personal-greeting",
+        "item": "agent-personal-greeting/{id}",
+        "create": ["name"], "deps": [], "writable": True, "binary": True,
+        "note": "EMPTY on the probed tenant, so its record shape and its "
+                "binary download route are BOTH UNVERIFIED. It carries audio "
+                "like audio-file does; if a tenant has greetings, expect the "
+                "blob fetch to need the same treatment and probe it first.",
+    },
     "audio-file": {
         "list": "v2/audio-file", "item": "audio-file/{id}",
         "create": ["name"], "deps": [], "writable": True, "binary": True,
@@ -264,6 +294,16 @@ def _spec(entity: str) -> dict:
             f"unknown entity {entity!r}. Known: {', '.join(sorted(CC_ENTITIES))}"
         )
     return CC_ENTITIES[entity]
+
+
+def name_field(entity: str) -> str:
+    """The field that carries an object's human identity.
+
+    Almost always "name". contact-number is the exception - it has no name,
+    only a phone number - and collision detection keys off this, so getting it
+    wrong makes every row look nameless and get skipped.
+    """
+    return _spec(entity).get("name_field", "name")
 
 
 def list_path(entity: str) -> str:

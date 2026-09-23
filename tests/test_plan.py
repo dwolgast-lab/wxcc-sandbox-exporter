@@ -100,3 +100,49 @@ def test_classify_reports_an_item_with_no_name():
 def test_classify_rejects_an_unknown_conflict_policy():
     with pytest.raises(ValueError):
         plan.classify([{"id": "s1", "name": "X"}], {}, "explode")
+
+
+# --- name_field: contact-number has no `name`, only a phone number ----------
+
+def test_classify_uses_the_entity_name_field():
+    # Live record: {"id": ..., "number": "5598621", "links": [], ...}
+    # With the default "name" field every row reads as nameless and is skipped,
+    # silently dropping real user data on import.
+    items = [{"id": "c1", "number": "5598621"}]
+    out = plan.classify(items, {}, "skip", name_field="number")
+    assert out[0]["action"] == "create"
+
+
+def test_classify_without_the_override_would_skip_a_contact_number():
+    items = [{"id": "c1", "number": "5598621"}]
+    out = plan.classify(items, {}, "skip")          # default "name"
+    assert out[0]["action"] == "skip"
+    assert "no name" in out[0]["reason"]
+
+
+def test_classify_matches_an_existing_row_on_the_alternate_field():
+    existing = {"5598621": {"id": "c9", "number": "5598621"}}
+    out = plan.classify([{"id": "c1", "number": "5598621"}], existing, "skip",
+                        name_field="number")
+    assert out[0]["action"] == "skip"
+    assert out[0]["existing"]["id"] == "c9"
+
+
+def test_rename_policy_renames_the_alternate_field():
+    existing = {"5598621": {"id": "c9"}}
+    out = plan.classify([{"id": "c1", "number": "5598621"}], existing, "rename",
+                        name_field="number")
+    assert out[0]["item"]["number"] == "5598621 (imported)"
+    assert "name" not in out[0]["item"]
+
+
+def test_index_existing_keys_contact_number_by_number(transport):
+    transport.add("GET /organization/ORG1/v2/contact-number",
+                  body={"data": [{"id": "c9", "number": "5598621"}]})
+    idx = plan.index_existing(make(transport), "contact-number")
+    assert idx["5598621"]["id"] == "c9"
+
+
+def test_registry_declares_number_as_the_contact_number_identity():
+    assert plan.registry.name_field("contact-number") == "number"
+    assert plan.registry.name_field("site") == "name"

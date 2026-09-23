@@ -55,12 +55,13 @@ def index_existing(client, entity: str) -> dict[str, dict]:
     is the safe direction: the API rejects a duplicate name, so a bad index
     causes a visible 400, not a silent overwrite.
     """
+    field = registry.name_field(entity)
     try:
         rows = client.list_all(registry.list_path(entity))
     except (ApiError, Exception):
         return {}
-    return {str(r.get("name", "")).strip().lower(): r
-            for r in rows if r.get("name")}
+    return {str(r.get(field, "")).strip().lower(): r
+            for r in rows if r.get(field)}
 
 
 def _free_name(name: str, existing: dict[str, dict]) -> str:
@@ -73,17 +74,24 @@ def _free_name(name: str, existing: dict[str, dict]) -> str:
 
 
 def classify(source_items: list[dict], existing: dict[str, dict],
-             on_conflict: str) -> list[dict]:
+             on_conflict: str, name_field: str = "name") -> list[dict]:
+    """Decide create / update / skip / rename for every source object.
+
+    `name_field` is the field carrying the object's human identity. It is
+    "name" for every entity but contact-number, which has only a phone number -
+    without the override every contact-number row reads as nameless and gets
+    skipped.
+    """
     if on_conflict not in CONFLICT_POLICIES:
         raise ValueError(f"unknown conflict policy {on_conflict!r}. "
                          f"Use one of: {', '.join(CONFLICT_POLICIES)}")
     out: list[dict] = []
     for item in source_items:
-        name = str(item.get("name", "")).strip()
+        name = str(item.get(name_field, "")).strip()
         if not name:
             out.append({"action": "skip", "item": item, "existing": None,
-                        "reason": "the object has no name, so it cannot be "
-                                  "matched against the target safely"})
+                        "reason": f"the object has no {name_field}, so it "
+                                  "cannot be matched against the target safely"})
             continue
         match = existing.get(name.lower())
         if not match:
@@ -97,7 +105,7 @@ def classify(source_items: list[dict], existing: dict[str, dict],
             out.append({"action": "update", "item": item, "existing": match,
                         "reason": f"{name!r} exists; updating it in place"})
         else:
-            renamed = {**item, "name": _free_name(name, existing)}
+            renamed = {**item, name_field: _free_name(name, existing)}
             out.append({"action": "rename", "item": renamed, "existing": match,
                         "reason": f"{name!r} exists; creating a renamed copy"})
     return out
