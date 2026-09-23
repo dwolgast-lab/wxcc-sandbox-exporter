@@ -38,7 +38,9 @@ CC_ENTITIES: dict[str, dict] = {
     },
     "skill": {
         "list": "v2/skill", "item": "skill/{id}",
-        "create": ["name", "serviceLevelThreshold", "type", "active"],
+        # VERIFIED 2026-09-23: the field is "skillType" (values seen:
+        # PROFICIENCY), not "type".
+        "create": ["name", "serviceLevelThreshold", "skillType", "active"],
         "deps": [], "writable": True,
     },
     "holiday-list": {
@@ -60,7 +62,13 @@ CC_ENTITIES: dict[str, dict] = {
     },
     "dial-number": {
         "list": "v2/dial-number", "item": "dial-number/{id}",
-        "create": ["number"], "deps": [], "writable": True,
+        # VERIFIED 2026-09-23: the field is "dialledNumber", not "number".
+        # DEPENDENCY WAS INVERTED: a dial-number carries entryPointId, and
+        # GET entry-point/{id}/incoming-references reports ['dial-number'],
+        # so the ENTRY POINT must exist first. The registry previously had
+        # entry-point depending on dial-number, which would have created every
+        # dial-number before its target existed and dangled the reference.
+        "create": ["dialledNumber"], "deps": ["entry-point"], "writable": True,
     },
     # Added 2026-09-23 after a live probe found these carried real data that
     # the exporter was silently missing. contact-number held one user-created
@@ -110,13 +118,18 @@ CC_ENTITIES: dict[str, dict] = {
     },
     "outdial-ani": {
         "list": "v2/outdial-ani", "item": "outdial-ani/{id}",
-        "create": ["name"], "deps": [], "writable": True,
+        # VERIFIED 2026-09-23: dial-number/{id}/incoming-references reports
+        # ['outdial-ani'], so dial numbers must exist first.
+        "create": ["name"], "deps": ["dial-number"], "writable": True,
         "child": {"list": "v2/outdial-ani/{parentId}/entry",
                   "create": "outdial-ani/{parentId}/entry"},
     },
     "user-profile": {
         "list": "v3/user-profile", "item": "user-profile/{id}",
-        "create": ["name", "profileType"], "deps": [], "writable": True,
+        # VERIFIED 2026-09-23: resource-collection/{id}/incoming-references
+        # reports ['user-profile'], so the collection must exist first.
+        "create": ["name", "profileType"], "deps": ["resource-collection"],
+        "writable": True,
     },
 
     # --- one level deep ---
@@ -134,11 +147,15 @@ CC_ENTITIES: dict[str, dict] = {
     },
     "skill-profile": {
         "list": "v2/skill-profile", "item": "skill-profile/{id}",
-        "create": ["name", "active"], "deps": ["skill"], "writable": True,
+        # VERIFIED 2026-09-23: real records carry only id/name/description/
+        # links/timestamps. There is no `active` field - it was invented.
+        "create": ["name"], "deps": ["skill"], "writable": True,
     },
     "business-hours": {
         "list": "v2/business-hours", "item": "business-hours/{id}",
-        "create": ["name", "timeZone"], "deps": ["holiday-list", "overrides"],
+        # VERIFIED 2026-09-23: the field is "timezone" (lowercase z), not
+        # "timeZone". The old spelling would have 400d on every create.
+        "create": ["name", "timezone"], "deps": ["holiday-list", "overrides"],
         "writable": True,
     },
     "entry-point": {
@@ -160,7 +177,8 @@ CC_ENTITIES: dict[str, dict] = {
         },
         "create": ["name", "entryPointType", "channelType",
                    "serviceLevelThreshold", "active", "maximumActiveContacts"],
-        "deps": ["dial-number"], "writable": True,
+        # Was ["dial-number"] - inverted, see the dial-number entry.
+        "deps": [], "writable": True,
     },
     "agent-profile": {
         "list": "v2/agent-profile", "item": "agent-profile/{id}",

@@ -209,3 +209,74 @@ def test_call_queues_list_is_org_scoped_not_location_scoped():
     assert "{locationId}" not in spec["list"]
     assert spec["list"] == "telephony/config/queues"
     assert spec["scope"] == "org"
+
+
+# --- create fields and dependencies, verified against a live tenant ---------
+# Captured 2026-09-23 from org davidwolgast-8xgo before its sandbox expired,
+# via scripts/capture_shapes.py. Every assertion below corrects a registry
+# error that real records exposed.
+
+def test_business_hours_timezone_is_lowercase():
+    # Was "timeZone". Real records carry "timezone"; the old spelling would
+    # have 400d on every create.
+    assert "timezone" in registry.CC_ENTITIES["business-hours"]["create"]
+    assert "timeZone" not in registry.CC_ENTITIES["business-hours"]["create"]
+
+
+def test_skill_uses_skill_type_not_type():
+    # Real value seen: skillType == "PROFICIENCY".
+    assert "skillType" in registry.CC_ENTITIES["skill"]["create"]
+    assert "type" not in registry.CC_ENTITIES["skill"]["create"]
+
+
+def test_skill_profile_has_no_active_field():
+    # Real records are id/name/description/links/timestamps only.
+    assert registry.CC_ENTITIES["skill-profile"]["create"] == ["name"]
+
+
+def test_dial_number_uses_dialled_number():
+    assert registry.CC_ENTITIES["dial-number"]["create"] == ["dialledNumber"]
+
+
+# --- the dependency graph the API's own incoming-references reports ---------
+
+def test_dial_number_depends_on_entry_point_not_the_reverse():
+    """The registry had this INVERTED.
+
+    A dial-number record carries entryPointId, and
+    GET entry-point/{id}/incoming-references reports ['dial-number'].
+    The old graph created every dial number before its entry point existed.
+    """
+    assert "entry-point" in registry.CC_ENTITIES["dial-number"]["deps"]
+    assert "dial-number" not in registry.CC_ENTITIES["entry-point"]["deps"]
+
+
+def test_user_profile_depends_on_resource_collection():
+    # resource-collection/{id}/incoming-references -> ['user-profile']
+    assert "resource-collection" in registry.CC_ENTITIES["user-profile"]["deps"]
+
+
+def test_outdial_ani_depends_on_dial_number():
+    # dial-number/{id}/incoming-references -> ['flow', 'outdial-ani']
+    assert "dial-number" in registry.CC_ENTITIES["outdial-ani"]["deps"]
+
+
+def test_observed_reference_graph_is_respected_by_the_ordering():
+    """Each pair is (must_exist_first, depends_on_it), read straight off the
+    live incoming-references responses."""
+    from wxcc_export import plan
+    order = plan.order_entities(list(registry.CC_ENTITIES))
+    pairs = [
+        ("entry-point", "dial-number"),
+        ("dial-number", "outdial-ani"),
+        ("resource-collection", "user-profile"),
+        ("work-type", "auxiliary-code"),
+        ("site", "team"),
+        ("skill", "skill-profile"),
+        ("holiday-list", "business-hours"),
+        ("overrides", "business-hours"),
+        ("outdial-ani", "agent-profile"),
+        ("multimedia-profile", "site"),
+    ]
+    for first, second in pairs:
+        assert order.index(first) < order.index(second), f"{first} must precede {second}"
