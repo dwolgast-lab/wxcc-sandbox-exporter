@@ -6,6 +6,87 @@ read this one.
 
 ---
 
+## 0. Installing
+
+Two ways to run it. Both behave identically.
+
+### Option A: the standalone executable (no Python needed)
+
+1. Open the repository's
+   [Releases page](https://github.com/dwolgast-lab/wxcc-sandbox-exporter/releases)
+   and download the zip for your machine:
+
+   | file | for |
+   |---|---|
+   | `wxcc-export-<version>-windows-x64.zip` | Windows 10/11, 64-bit |
+   | `wxcc-export-<version>-macos-arm64.zip` | Apple Silicon Macs (M1 and later) |
+   | `wxcc-export-<version>-linux-x64.zip` | 64-bit Linux |
+
+   There is no Intel-Mac build. On an Intel Mac, use Option B.
+
+2. Unzip it into a folder of its own, such as `wxcc-export/`. The zip
+   contains the executable, this guide, the README, the CHANGELOG, the
+   license and `.env.example`.
+3. **Put your `.env` in that same folder, next to the executable.** The
+   executable always reads `.env` and stores its tokens in `.wxcc/` next to
+   itself, whatever directory you run it from. Put it somewhere you can
+   write to, not `C:\Program Files`.
+4. The first run warns you because the executables are not code-signed:
+   - **Windows:** SmartScreen shows "Windows protected your PC". Click
+     **More info**, then **Run anyway**.
+   - **macOS:** run `xattr -d com.apple.quarantine ./wxcc-export` once in
+     that folder, then run the program normally.
+   - **Linux:** if the executable bit was lost, run `chmod +x wxcc-export`.
+5. Check that it runs: `./wxcc-export --version` (on Windows,
+   `.\wxcc-export.exe --version`).
+
+**Command names.** This guide writes commands as `python -m wxcc_export ...`.
+With the executable, write `wxcc-export ...` (or `.\wxcc-export.exe ...` in
+PowerShell) instead. The arguments are the same.
+
+### Option B: from source (Python 3.11 or newer)
+
+The tool has **no third-party runtime dependencies**, so there is nothing to
+`pip install`:
+
+```bash
+git clone https://github.com/dwolgast-lab/wxcc-sandbox-exporter
+cd wxcc-sandbox-exporter
+python wxcc-export.py --version
+```
+
+`python wxcc-export.py ...` works straight after cloning. Put `.env` in the
+checkout root. If you want the `wxcc-export` command on your PATH, or want
+`python -m wxcc_export` to work, run `pip install -e .`; neither is required.
+The source code for each release is also attached to its GitHub Release page
+as a zip and a tar.gz.
+
+### Fastest start: a personal bearer token
+
+If you only need a quick export, you can skip the Integration registration
+in [§2](#2-registering-a-webex-integration). Create a `.env` containing only:
+
+```
+WXCC_BEARER_TOKEN=<your personal access token from developer.webex.com>
+```
+
+The token must belong to a Contact Center administrator on the tenant, and it
+expires 12 hours after you create it, so generate a fresh one just before you
+run. Then run `wxcc-export auth status`, confirm that the org it prints is
+the tenant you meant, and run `wxcc-export export`.
+
+Two settings may need adding:
+- `WXCC_API_BASE`: set it if your tenant is **not** in the US1 region. The
+  default is `https://api.wxcc-us1.cisco.com`, the only region this tool has
+  been tested against.
+- `WXCC_ORG_ID`: set it if calls fail on the org id. The org id is normally
+  read out of the token.
+
+The tool prints a warning every time it uses a bearer token. OAuth2 (§2) is
+the better choice for anything longer than one session.
+
+---
+
 ## 1. What this does and does not do
 
 Read this section before you export anything. The tool talks to the real

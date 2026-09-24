@@ -67,3 +67,17 @@ def test_real_environment_overrides_the_file(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "REPO_DIR", tmp_path)
     monkeypatch.setenv("WXCC_CLIENT_ID", "from_env")
     assert config.load_config()["client_id"] == "from_env"
+
+
+def test_base_dir_is_the_repo_root_when_run_from_source():
+    # src/wxcc_export/config.py -> parents[2] is the checkout root.
+    assert (config._base_dir() / "pyproject.toml").exists()
+
+
+def test_base_dir_is_the_executables_folder_when_frozen(tmp_path, monkeypatch):
+    # A one-file build unpacks to a temp dir that is deleted on exit; resolving
+    # .env and .wxcc/ from __file__ there would lose every stored token.
+    exe = tmp_path / "wxcc-export.exe"
+    monkeypatch.setattr(config.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(config.sys, "executable", str(exe))
+    assert config._base_dir() == tmp_path.resolve()

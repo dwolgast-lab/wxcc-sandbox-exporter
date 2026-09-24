@@ -221,6 +221,42 @@ tenant's count, minus any object reported FAILED or skipped as a default.
 **Expected:** the call reaches the imported queue and plays the imported audio
 prompt. This is the only case that proves the configuration is functional
 rather than merely present.
+**Known gap:** import does not re-upload audio files (see CHANGELOG, Known
+limitations). Upload each prompt in Control Hub before this test, or expect
+it to fail at the prompt.
+**Observed:** ______________________  **PASS / FAIL**
+
+## R. Release executable
+
+Run these with the downloaded release zip, on a machine **without Python**
+where possible.
+
+### R1 - The executable runs and reports its version
+Unzip into a fresh folder and run `wxcc-export --version`.
+**Expected:** prints `wxcc-export <version>` matching the release tag.
+**Observed:** ______________________  **PASS / FAIL**
+
+### R2 - The zip carries the docs
+**Expected:** the zip contains `README.md`, `CHANGELOG.md`, `LICENSE`,
+`.env.example`, `docs/user-guide.md` and `docs/api-notes.md`.
+**Observed:** ______________________  **PASS / FAIL**
+
+### R3 - .env is read from the executable's folder, not the current directory
+Put `.env` next to the executable, `cd` into a different folder and run
+`<path-to>/wxcc-export auth status`.
+**Expected:** it uses that `.env`. With a bearer token it prints
+`auth source: bearer`. After `auth login`, `.wxcc/` is created next to the
+executable.
+**Observed:** ______________________  **PASS / FAIL**
+
+### R4 - inspect works on a real archive
+**Expected:** `wxcc-export inspect <archive>.zip` lists the entity counts
+with no credentials and no `.env`.
+**Observed:** ______________________  **PASS / FAIL**
+
+### R5 - The web UI loads
+**Expected:** `wxcc-export web` opens a page that renders with its styling,
+not unstyled HTML.
 **Observed:** ______________________  **PASS / FAIL**
 
 ## Sign-off
@@ -228,10 +264,11 @@ rather than merely present.
 | Section | Cases | Passed | Failed |
 |---|---|---|---|
 | A Authentication | 5 | | |
-| B Export | 7 | | |
+| B Export | 9 | | |
 | C Import | 12 | | |
 | D Web UI | 5 | | |
 | E Round-trip | 2 | | |
+| R Release executable | 5 | | |
 
 **Blocking failures (must fix before release):** any FAIL in A3, C2, C5, D1, D2.
 These are the cases that protect the wrong tenant from being written to.

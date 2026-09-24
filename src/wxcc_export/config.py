@@ -8,9 +8,23 @@ write meant for the new sandbox lands on the old one.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
-REPO_DIR = Path(__file__).resolve().parents[2]
+
+def _base_dir() -> Path:
+    """Where .env files and the .wxcc/ token store live.
+
+    From source: the checkout root. As a PyInstaller executable: the folder
+    holding the executable - a one-file build runs from a temp dir that is
+    deleted on exit, so resolving from __file__ there would lose every token.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[2]
+
+
+REPO_DIR = _base_dir()
 
 WXCC_DEFAULT_API_BASE = "https://api.wxcc-us1.cisco.com"
 WEBEX_API_BASE = "https://webexapis.com/v1"

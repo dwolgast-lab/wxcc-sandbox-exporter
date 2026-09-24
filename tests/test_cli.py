@@ -386,3 +386,11 @@ def test_launcher_script_runs_with_no_pythonpath_from_a_fresh_clone():
         cwd=repo_root, env=env, capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr
     assert "usage" in result.stdout.lower()
+
+
+def test_version_flag_prints_the_package_version(capsys):
+    from wxcc_export import __version__
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["--version"])
+    assert exc.value.code == 0
+    assert __version__ in capsys.readouterr().out

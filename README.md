@@ -73,19 +73,40 @@ captured under `entry-point`. There is no separate Channels API to be missing.
 
 ## Quick start
 
+**No Python? Use the executable.** Download the zip for your OS from
+[Releases](https://github.com/dwolgast-lab/wxcc-sandbox-exporter/releases),
+unzip it, and put your `.env` **next to the executable**:
+
+```powershell
+# Windows (PowerShell). On macOS/Linux use ./wxcc-export
+copy .env.example .env               # then fill it in (see below)
+.\wxcc-export.exe auth login           # OAuth2 only; skip with a bearer token
+.\wxcc-export.exe auth status         # CONFIRM the org id is the tenant you meant
+.\wxcc-export.exe export
+```
+
+**From source** (Python 3.11+, no packages to install):
+
 ```bash
 git clone https://github.com/dwolgast-lab/wxcc-sandbox-exporter
 cd wxcc-sandbox-exporter
-pip install -e .                    # required: the package lives under src/,
-                                     # so `python -m wxcc_export` needs this first
-cp .env.example .env                # add your Integration's client id/secret
-python -m wxcc_export auth login    # opens a browser; use a PRIVATE window
-python -m wxcc_export auth status   # CONFIRM the org id is the tenant you meant
-python -m wxcc_export export
+cp .env.example .env
+python wxcc-export.py auth login     # opens a browser; use a PRIVATE window
+python wxcc-export.py auth status    # CONFIRM the org id is the tenant you meant
+python wxcc-export.py export
 ```
 
-Every command also works as `wxcc-export ...` (the console script that
-`pip install -e .` registers) instead of `python -m wxcc_export ...`.
+**What goes in `.env`:** there are two options.
+- The client id and secret of your own Webex Integration. This is the OAuth2
+  route; see [user guide §2](docs/user-guide.md#2-registering-a-webex-integration).
+- A single `WXCC_BEARER_TOKEN=` line holding a personal token from
+  developer.webex.com. It is quicker to set up, but it expires in 12 hours.
+  See [user guide §0](docs/user-guide.md#fastest-start-a-personal-bearer-token).
+
+If your tenant is not in the US1 region, set `WXCC_API_BASE` as well.
+
+`pip install -e .` is optional. It adds a `wxcc-export` command and makes
+`python -m wxcc_export` work.
 
 Full detail on every command, every flag, and every failure mode: the
 **[user guide](docs/user-guide.md)**. Tenant-specific facts that aren't in
@@ -107,6 +128,20 @@ own probe run has produced it.
   optional `127.0.0.1`-only web UI; there is no server component and never
   will be one. OAuth2 tokens live in a gitignored `.wxcc/` directory on your
   own machine, one file per tenant profile.
+
+## Releasing (maintainers)
+
+1. Bump `__version__` in `src/wxcc_export/__init__.py` and `version` in
+   `pyproject.toml`.
+2. Move the `[Unreleased]` notes in `CHANGELOG.md` under a new
+   `## [x.y.z] - YYYY-MM-DD` heading.
+3. Commit, then `git tag vx.y.z && git push origin main vx.y.z`.
+
+The `release` workflow runs the tests on Windows, macOS and Linux and builds
+each executable. It then publishes a GitHub Release with the three zips, and
+uses that version's CHANGELOG section as the release notes. It refuses to run
+if the tag and the package version disagree. To build locally, run
+`pip install pyinstaller` and then `python scripts/build_release.py`.
 
 ## License
 

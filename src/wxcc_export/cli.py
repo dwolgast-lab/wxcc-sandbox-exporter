@@ -16,6 +16,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from . import __version__
 from . import (archive, auth, client, config, export_calling, export_cc,
                export_flows, importer, plan, registry, tenant)
 
@@ -35,6 +36,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="wxcc-export",
         description="Export and import Webex Contact Center sandbox configuration.",
         parents=[common])
+    p.add_argument("--version", action="version",
+                   version=f"%(prog)s {__version__}")
     sub = p.add_subparsers(dest="command", required=True)
 
     a = sub.add_parser("auth", help="manage authentication", parents=[common])

@@ -1,0 +1,55 @@
+# Push a tag like v0.1.0 and this builds the standalone executable on each OS,
+# runs the test suite first, and publishes a GitHub Release with the zips.
+# GitHub attaches the source code (zip and tar.gz) to every release on its own.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check the tag matches the package version
+        shell: bash
+        run: |
+          v=$(python -c "import sys; sys.path.insert(0,'src'); import wxcc_export; print(wxcc_export.__version__)")
+          test "v$v" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} != package v$v"; exit 1; }
+      - run: pip install -r requirements-dev.txt pyinstaller
+      - run: python -m pytest -q
+      - run: python scripts/build_release.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}
+          path: dist/*.zip
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Extract this version's changelog section
+        shell: bash
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          awk -v h="## [$v]" 'index($0, h) == 1 {on=1; next} /^(## \[|\[)/ {on=0} on' CHANGELOG.md > notes.md
+          test -s notes.md || { echo "no CHANGELOG section for $v"; exit 1; }
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/*.zip --title "$GITHUB_REF_NAME" --notes-file notes.md
