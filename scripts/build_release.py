@@ -8,7 +8,7 @@ Produces dist/wxcc-export-<version>-<platform>.zip containing the executable
 (no Python needed to run it), the user docs, .env.example and the license.
 
 PyInstaller cannot cross-compile: run this once per OS. The GitHub Actions
-release workflow does exactly that for Windows, macOS and Linux.
+release workflow runs it on each OS in its matrix (currently Windows).
 """
 
 from __future__ import annotations

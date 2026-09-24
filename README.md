@@ -73,12 +73,12 @@ captured under `entry-point`. There is no separate Channels API to be missing.
 
 ## Quick start
 
-**No Python? Use the executable.** Download the zip for your OS from
+**No Python? Use the executable.** Download the Windows zip from
 [Releases](https://github.com/dwolgast-lab/wxcc-sandbox-exporter/releases),
 unzip it, and put your `.env` **next to the executable**:
 
 ```powershell
-# Windows (PowerShell). On macOS/Linux use ./wxcc-export
+# Windows (PowerShell). macOS/Linux: run from source, below.
 copy .env.example .env               # then fill it in (see below)
 .\wxcc-export.exe auth login           # OAuth2 only; skip with a bearer token
 .\wxcc-export.exe auth status         # CONFIRM the org id is the tenant you meant
@@ -137,9 +137,11 @@ own probe run has produced it.
    `## [x.y.z] - YYYY-MM-DD` heading.
 3. Commit, then `git tag vx.y.z && git push origin main vx.y.z`.
 
-The `release` workflow runs the tests on Windows, macOS and Linux and builds
-each executable. It then publishes a GitHub Release with the three zips, and
-uses that version's CHANGELOG section as the release notes. It refuses to run
+The `release` workflow runs the tests and builds the Windows executable. It
+then publishes a GitHub Release with the zip, and uses that version's
+CHANGELOG section as the release notes. To add macOS or Linux, add
+`macos-latest` or `ubuntu-latest` to its `matrix.os`; the build script already
+handles them. It refuses to run
 if the tag and the package version disagree. To build locally, run
 `pip install pyinstaller` and then `python scripts/build_release.py`.
 

@@ -14,15 +14,11 @@ Two ways to run it. Both behave identically.
 
 1. Open the repository's
    [Releases page](https://github.com/dwolgast-lab/wxcc-sandbox-exporter/releases)
-   and download the zip for your machine:
+   and download `wxcc-export-<version>-windows-x64.zip`. It runs on 64-bit
+   Windows 10 and 11.
 
-   | file | for |
-   |---|---|
-   | `wxcc-export-<version>-windows-x64.zip` | Windows 10/11, 64-bit |
-   | `wxcc-export-<version>-macos-arm64.zip` | Apple Silicon Macs (M1 and later) |
-   | `wxcc-export-<version>-linux-x64.zip` | 64-bit Linux |
-
-   There is no Intel-Mac build. On an Intel Mac, use Option B.
+   **Only Windows builds are published at the moment.** On macOS or Linux,
+   use Option B.
 
 2. Unzip it into a folder of its own, such as `wxcc-export/`. The zip
    contains the executable, this guide, the README, the CHANGELOG, the
@@ -31,14 +27,10 @@ Two ways to run it. Both behave identically.
    executable always reads `.env` and stores its tokens in `.wxcc/` next to
    itself, whatever directory you run it from. Put it somewhere you can
    write to, not `C:\Program Files`.
-4. The first run warns you because the executables are not code-signed:
-   - **Windows:** SmartScreen shows "Windows protected your PC". Click
-     **More info**, then **Run anyway**.
-   - **macOS:** run `xattr -d com.apple.quarantine ./wxcc-export` once in
-     that folder, then run the program normally.
-   - **Linux:** if the executable bit was lost, run `chmod +x wxcc-export`.
-5. Check that it runs: `./wxcc-export --version` (on Windows,
-   `.\wxcc-export.exe --version`).
+4. The executable is not code-signed, so the first run shows a SmartScreen
+   warning, "Windows protected your PC". Click **More info**, then
+   **Run anyway**.
+5. Check that it runs: `.\wxcc-export.exe --version`.
 
 **Command names.** This guide writes commands as `python -m wxcc_export ...`.
 With the executable, write `wxcc-export ...` (or `.\wxcc-export.exe ...` in

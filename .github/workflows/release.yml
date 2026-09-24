@@ -15,7 +15,9 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
+        # Windows only for now. build_release.py also handles macos-latest
+        # and ubuntu-latest; add them here once they have been tested.
+        os: [windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

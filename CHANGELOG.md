@@ -12,9 +12,9 @@ First public release.
 
 ### Added
 
-- **Standalone executables** for Windows, macOS and Linux, built with
-  PyInstaller. No Python install is needed to run them. The source code is
-  still available for anyone who wants to run from Python.
+- **A standalone Windows executable** (64-bit), built with PyInstaller. No
+  Python install is needed to run it. On macOS and Linux, run the tool from
+  source; the source code is attached to every release.
 - `--version` flag.
 - **Export** of a Webex Contact Center tenant to `<tenant>-export.zip`:
   - 25 Contact Center entities. Entry points are swept across every
@@ -46,8 +46,9 @@ First public release.
 - No API exists for Surveys. Recreate them by hand; `UNSUPPORTED.md` lists them.
 - Contact Center users can only be exported, as a CSV reference. Invite and
   license users in Control Hub.
-- The executables are unsigned. Windows SmartScreen and macOS Gatekeeper will
-  warn the first time you run them; see the user guide, §0.
+- The executable is unsigned, so Windows SmartScreen warns the first time you
+  run it. The user guide, §0, explains how to continue.
+- No macOS or Linux executables yet.
 
 [Unreleased]: https://github.com/dwolgast-lab/wxcc-sandbox-exporter/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/dwolgast-lab/wxcc-sandbox-exporter/releases/tag/v0.1.0
