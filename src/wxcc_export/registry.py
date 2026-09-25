@@ -107,6 +107,14 @@ CC_ENTITIES: dict[str, dict] = {
     },
     "agent-personal-greeting": {
         "list": "v3/agent-personal-greeting",
+        # UPLOAD (live-verified by the sibling wxcc-skills repo, 2026-07-22, full
+        # create/put/delete round trip): multipart ONLY - every JSON body is a
+        # bare 500 despite the spec listing application/json. The metadata part
+        # must be typed application/json (else 415); the file part carries a
+        # filename and audio/wav. A replacing PUT must carry the TARGET record's
+        # own blobId (else 400).
+        "upload": {"info_part": "agentPersonalGreetingInfo", "file_part": "audioFile",
+                   "file_type": "audio/wav"},
         "item": "agent-personal-greeting/{id}",
         "create": ["name", "contentType", "agentId", "greetingPurposeId"], "deps": [], "writable": True, "binary": True,
         "note": "EMPTY on the probed tenant, so its record shape and its "
@@ -116,6 +124,14 @@ CC_ENTITIES: dict[str, dict] = {
     },
     "audio-file": {
         "list": "v2/audio-file", "item": "audio-file/{id}",
+        # UPLOAD (live-verified by the sibling wxcc-skills repo, 2026-07-22, full
+        # create/put/delete round trip): multipart ONLY - every JSON body is a
+        # bare 500 despite the spec listing application/json. The metadata part
+        # must be typed application/json (else 415); the file part carries a
+        # filename and audio/wav. A replacing PUT must carry the TARGET record's
+        # own blobId (else 400).
+        "upload": {"info_part": "audioFileInfo", "file_part": "audioFile",
+                   "file_type": "audio/wav"},
         "create": ["name", "contentType"], "deps": [], "writable": True, "binary": True,
         "note": "Upload is multipart/form-data. The spec claims audio-file "
                 "accepts JSON; the sibling repo records that it does not.",

@@ -6,6 +6,55 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-09-25
+
+### Fixed
+
+- **`--profile` before the command was ignored.**
+  `wxcc-export --profile newsandbox import ...` silently used `.env`
+  instead of `.env.newsandbox`, so it ran with a different token, and
+  possibly a different tenant, than the one named. Only
+  `import ... --profile newsandbox` worked, although the docs said both
+  orders do. Both orders now work.
+- **An expired or rejected token now stops the import immediately**, with
+  a message saying to get a fresh token. Before, v0.1.1 did two things:
+  - A dry run with a dead token looked clean. Every lookup of the target
+    failed with 401 and was read as "the target is empty", so everything
+    was planned as a create and nothing was skipped.
+  - A confirmed run sent every write anyway: over 200 identical 401s in the
+    first real report.
+- The import now checks the token against the target before planning
+  anything.
+- The first 401/403 on a write stops the run. Everything done before that
+  point is still reported, and re-running skips it by name.
+- The web UI does the same.
+- **Flow hand-offs are linked.** A flow that hands off to another flow
+  (`handOffFlow.handOffTo`) was imported before its target, so it kept the
+  old tenant's flow id. Flows are now imported so every hand-off target comes
+  first, and a target whose import returns no id is looked up by name
+  immediately. Seen in a real archive: `ACME_Main` handing off to
+  `ACME_Sales`, `ACME_Support` and `ACME_General`.
+
+### Added
+
+- **Audio files are uploaded on import**, with the recordings the export
+  captured. Each file is uploaded as a two-part multipart request: the
+  metadata typed `application/json`, then the recording typed `audio/wav`.
+  That is the format the sibling `wxcc-skills` project verified against a
+  live tenant. Cisco's API spec also lists a plain JSON body, but that
+  returns 500. The old tenant's `blobId` is never sent, and updating an
+  existing file uses the new tenant's own `blobId`. A record with no
+  recording in the archive is reported instead of being created empty.
+- Agent personal greetings are uploaded the same way, but the export does
+  not yet download their recordings, so for now each one is reported as
+  "no recording in the archive".
+
+### Known limitations
+
+- **Audio upload has not been run by this tool against a real tenant.** It
+  follows the sibling project's verified format, and is covered by tests
+  and by a dry run of a real archive.
+
 ## [0.1.1] - 2026-09-25
 
 Fixes found from the first real import attempt, a dry run into a new
@@ -104,6 +153,7 @@ First public release.
   run it. The user guide, §0, explains how to continue.
 - No macOS or Linux executables yet.
 
-[Unreleased]: https://github.com/dwolgast-lab/wxcc-sandbox-exporter/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/dwolgast-lab/wxcc-sandbox-exporter/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/dwolgast-lab/wxcc-sandbox-exporter/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/dwolgast-lab/wxcc-sandbox-exporter/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/dwolgast-lab/wxcc-sandbox-exporter/releases/tag/v0.1.0

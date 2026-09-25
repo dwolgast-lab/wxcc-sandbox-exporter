@@ -296,3 +296,114 @@ def test_entry_points_are_ordered_after_the_audio_they_play():
     assert order.index("audio-file") < order.index("entry-point")
     # layouts first; their teamIds are deferred (team <-> layout cycle)
     assert order.index("desktop-layout") < order.index("team")
+
+
+# --- flow hand-offs and audio uploads (Eric's archive, 2026-09-25) ------------
+
+def _parts(call):
+    """Split a recorded multipart body into {name: (headers, payload)}."""
+    ctype = call["headers"]["Content-Type"]
+    boundary = ctype.split("boundary=", 1)[1].encode()
+    out = {}
+    for chunk in call["data"].split(b"--" + boundary)[1:-1]:
+        head, _, payload = chunk.strip(b"\r\n").partition(b"\r\n\r\n")
+        name = head.split(b'name="', 1)[1].split(b'"', 1)[0].decode()
+        out[name] = (head.decode(), payload)
+    return out
+
+
+def test_a_hand_off_target_flow_is_imported_before_the_flow_that_uses_it(transport):
+    transport.add(FLOW_IMPORT, status=200, body={"id": "NEW-SALES"})
+    transport.add(FLOW_IMPORT, status=200, body={"id": "NEW-MAIN"})
+    reader = Reader(flows={
+        "main": {"meta": {"name": "ACME_Main"},
+                 "document": {"id": "main", "name": "ACME_Main",
+                              "handOffFlow": {"handOffTo": "sales"}}},
+        "sales": {"meta": {"name": "ACME_Sales"},
+                  "document": {"id": "sales", "name": "ACME_Sales"}}})
+    m = idmap.IdMap()
+    res = importer.import_flows(make(transport), reader, "flows", m, confirm=True)
+    sent = bodies(transport, "POST")
+    assert [b["name"] for b in sent] == ["ACME_Sales", "ACME_Main"]
+    assert sent[1]["handOffFlow"]["handOffTo"] == "NEW-SALES"
+    assert res.dangling == set()
+
+
+def test_a_hand_off_target_without_a_returned_id_is_mapped_by_name_at_once(transport):
+    transport.add(FLOW_IMPORT, status=200, body={})
+    transport.add(FLOW_LIST, body={"data": [{"id": "NEW-SALES", "name": "ACME_Sales"}]})
+    reader = Reader(flows={
+        "main": {"meta": {"name": "ACME_Main"},
+                 "document": {"name": "ACME_Main", "handOffFlow": {"handOffTo": "sales"}}},
+        "sales": {"meta": {"name": "ACME_Sales"}, "document": {"name": "ACME_Sales"}}})
+    importer.import_flows(make(transport), reader, "flows", idmap.IdMap(), confirm=True)
+    assert bodies(transport, "POST")[1]["handOffFlow"]["handOffTo"] == "NEW-SALES"
+
+
+def test_a_hand_off_cycle_still_imports_every_flow(transport):
+    transport.add(FLOW_IMPORT, status=200, body={"id": "X"})
+    reader = Reader(flows={
+        "a": {"meta": {"name": "A"}, "document": {"name": "A", "handOffTo": "b"}},
+        "b": {"meta": {"name": "B"}, "document": {"name": "B", "handOffTo": "a"}}})
+    importer.import_flows(make(transport), reader, "flows", idmap.IdMap(), confirm=True)
+    assert len([c for c in transport.calls if c["method"] == "POST"]) == 2
+
+
+class AudioReader(Reader):
+    def __init__(self, blobs, **kw):
+        super().__init__(**kw)
+        self._blobs = blobs
+
+    def audio_blob(self, item_id):
+        return self._blobs.get(item_id)
+
+
+def test_audio_is_uploaded_as_multipart_with_the_recording(transport):
+    transport.add("GET /organization/ORG1/v2/audio-file", body={"data": []})
+    transport.add("POST /organization/ORG1/audio-file", status=201,
+                  body={"id": "A9", "name": "hello.wav", "contentType": "AUDIO_WAV"})
+    transport.add("GET /organization/ORG1/audio-file/A9",
+                  body={"id": "A9", "name": "hello.wav", "contentType": "AUDIO_WAV"})
+    reader = AudioReader({"a1": b"RIFF....WAVE"}, cc={"audio-file": [
+        {"id": "a1", "name": "hello.wav", "contentType": "AUDIO_WAV",
+         "blobId": "audio-file_SOURCE", "default_basis": "createdTime-heuristic"}]})
+    results = importer.run_import(make(transport), make(transport), reader,
+                                  ["cc:audio-file"], "skip", True, "TGTORG")
+    post = next(c for c in transport.calls if c["method"] == "POST")
+    assert post["headers"]["Content-Type"].startswith("multipart/form-data")
+    parts = _parts(post)
+    info_head, info = parts["audioFileInfo"]
+    assert "Content-Type: application/json" in info_head
+    meta = json.loads(info)
+    assert meta == {"name": "hello.wav", "contentType": "AUDIO_WAV"}  # no source blobId
+    file_head, audio = parts["audioFile"]
+    assert 'filename="hello.wav"' in file_head and "audio/wav" in file_head
+    assert audio == b"RIFF....WAVE"
+    assert results["audio-file"].created == ["A9"] and not results["audio-file"].unverified
+
+
+def test_audio_without_a_recording_is_reported_not_created_empty(transport):
+    transport.add("GET /organization/ORG1/v2/audio-file", body={"data": []})
+    reader = AudioReader({}, cc={"audio-file": [
+        {"id": "a1", "name": "hello.wav", "contentType": "AUDIO_WAV"}]})
+    for confirm in (False, True):
+        results = importer.run_import(make(transport), make(transport), reader,
+                                      ["cc:audio-file"], "skip", confirm, "TGTORG")
+        assert "recording" in results["audio-file"].failed[0]["detail"]
+    assert not [c for c in transport.calls if c["method"] == "POST"]
+
+
+def test_audio_update_carries_the_target_records_own_blob_id(transport):
+    transport.add("GET /organization/ORG1/v2/audio-file", body={"data": [
+        {"id": "T1", "name": "hello.wav", "blobId": "audio-file_TARGET"}]})
+    transport.add("PUT /organization/ORG1/audio-file/T1", status=200, body={"id": "T1"})
+    transport.add("GET /organization/ORG1/audio-file/T1",
+                  body={"id": "T1", "name": "hello.wav", "contentType": "AUDIO_WAV",
+                        "blobId": "audio-file_TARGET"})
+    reader = AudioReader({"a1": b"RIFF"}, cc={"audio-file": [
+        {"id": "a1", "name": "hello.wav", "contentType": "AUDIO_WAV",
+         "blobId": "audio-file_SOURCE"}]})
+    importer.run_import(make(transport), make(transport), reader,
+                        ["cc:audio-file"], "update", True, "TGTORG")
+    put = next(c for c in transport.calls if c["method"] == "PUT")
+    assert json.loads(_parts(put)["audioFileInfo"][1])["blobId"] == "audio-file_TARGET"

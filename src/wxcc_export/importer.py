@@ -14,9 +14,32 @@ from __future__ import annotations
 import json as _json
 from dataclasses import dataclass, field
 
+from . import auth
 from . import idmap as idmap_mod
 from . import plan, registry
 from .client import ApiError
+
+REJECTED = (401, 403)
+
+
+class AuthRejected(auth.AuthError):
+    """The target refused the token part-way through. Nothing after this is
+    sent - 200 more identical 401s help nobody - and `result` holds what the
+    interrupted step had done so run_import can still report it."""
+
+    def __init__(self, message: str, result=None):
+        super().__init__(message)
+        self.result = result
+        self.results: dict = {}
+
+
+def _stop_if_rejected(status: int, result, item_id, where: str) -> None:
+    if status in REJECTED:
+        result.failed.append({"id": item_id,
+                              "detail": f"HTTP {status}: token rejected"})
+        raise AuthRejected(
+            f"the target rejected the token (HTTP {status}) while writing "
+            f"{where}", result)
 
 # Set by the server on every object; never part of what we asked it to store.
 SERVER_ASSIGNED = frozenset({
@@ -93,7 +116,9 @@ def verify_write(client, entity: str, new_id: str, sent: dict) -> list[str]:
 
 def import_entity(client, entity: str, items: list[dict],
                   idmap_: idmap_mod.IdMap, on_conflict: str,
-                  confirm: bool) -> ImportResult:
+                  confirm: bool, blob_for=None) -> ImportResult:
+    """Import one entity. `blob_for(source_id) -> bytes | None` supplies the
+    recording for entities that are uploads (registry "upload")."""
     result = ImportResult(entity=entity, dry_run=not confirm)
     spec = registry.CC_ENTITIES.get(entity, {})
 
@@ -113,6 +138,7 @@ def import_entity(client, entity: str, items: list[dict],
         result.note = spec.get("note", "")
         return result
     deferred_fields = spec.get("deferred", [])
+    upload = spec.get("upload")
 
     existing = plan.index_existing(client, entity)
     result.planned = plan.classify(items, existing, on_conflict,
@@ -133,6 +159,19 @@ def import_entity(client, entity: str, items: list[dict],
             continue
 
         stripped = idmap_mod.strip_identity(source)
+        recording = None
+        if upload:
+            # blobId/url name the SOURCE tenant's storage; meaningless here.
+            stripped.pop("blobId", None)
+            stripped.pop("url", None)
+            recording = blob_for(source_id) if (blob_for and source_id) else None
+            if recording is None:
+                result.failed.append({
+                    "id": source_id,
+                    "detail": f"{entity} {source.get(registry.name_field(entity))!r}: "
+                              "no recording in the archive, so it cannot be "
+                              "uploaded - add it in Control Hub"})
+                continue
         held = {f: stripped.pop(f) for f in deferred_fields
                 if stripped.get(f) not in (None, "")}
         payload = idmap_.substitute(stripped)
@@ -156,17 +195,27 @@ def import_entity(client, entity: str, items: list[dict],
 
         try:
             if action == "update":
-                target_id = step["existing"]["id"]
-                status, body = client.json(
-                    "PUT", registry.item_path(entity, target_id), payload)
+                method, path = "PUT", registry.item_path(entity, step["existing"]["id"])
             else:
-                status, body = client.json(
-                    "POST", registry.create_path(entity), payload)
+                method, path = "POST", registry.create_path(entity)
+            if upload:
+                info = dict(payload)
+                if action == "update":
+                    info["blobId"] = step["existing"].get("blobId")
+                filename = str(source.get("name") or f"{source_id}.wav")
+                parts = [(upload["info_part"], None, "application/json",
+                          _json.dumps(info).encode()),
+                         (upload["file_part"], filename, upload["file_type"],
+                          recording)]
+                status, body = client.multipart(method, path, parts)
+            else:
+                status, body = client.json(method, path, payload)
         except Exception as exc:
             result.failed.append({"id": source_id,
                                   "detail": f"{type(exc).__name__}: {exc}"})
             continue
 
+        _stop_if_rejected(status, result, source_id, entity)
         if status >= 400:
             result.failed.append({"id": source_id,
                                   "detail": f"HTTP {status}: {_reason(body)}"})
@@ -224,10 +273,14 @@ def apply_deferred(client, entity: str, pending: list[dict],
             continue
         try:
             status, body = client.json("GET", registry.item_path(entity, target_id))
+            _stop_if_rejected(status, result, target_id, f"{entity} links")
             if status != 200 or not isinstance(body, dict):
                 raise ApiError(f"re-read returned HTTP {status}", status=status)
             status, body = client.json("PUT", registry.item_path(entity, target_id),
                                        {**body, **wanted})
+            _stop_if_rejected(status, result, target_id, f"{entity} links")
+        except AuthRejected:
+            raise
         except Exception as exc:
             result.failed.append({"id": target_id,
                                   "detail": f"{type(exc).__name__}: {exc}"})
@@ -266,7 +319,8 @@ def import_cc(client, reader, keys: list[str], on_conflict: str = "skip",
     out: dict[str, ImportResult] = {}
     for entity in ordered:
         result = import_entity(client, entity, reader.entity_items(entity),
-                               shared, on_conflict, confirm)
+                               shared, on_conflict, confirm,
+                               blob_for=getattr(reader, "audio_blob", None))
         out[entity] = result
         if on_progress:
             on_progress(entity, result)
@@ -315,7 +369,9 @@ def import_flows(client, reader, bucket: str, idmap_: idmap_mod.IdMap,
     path = (f"{{orgId}}/project/{project_id}/v2/flows:import"
             f"?overwrite={str(overwrite).lower()}&flowType={flow_type}")
 
-    for flow_id, payload in reader.flows(bucket).items():
+    source = reader.flows(bucket)
+    for flow_id in _hand_off_order(source):
+        payload = source[flow_id]
         document = idmap_.substitute((payload or {}).get("document") or {})
         # A flow document carries its own id; that is not a reference.
         result.dangling |= idmap_.unmapped(document) - {flow_id}
@@ -332,6 +388,7 @@ def import_flows(client, reader, bucket: str, idmap_: idmap_mod.IdMap,
             result.failed.append({"id": flow_id,
                                   "detail": f"{type(exc).__name__}: {exc}"})
             continue
+        _stop_if_rejected(status, result, flow_id, f"flows:{bucket}")
         if status >= 400:
             result.failed.append({"id": flow_id,
                                   "detail": f"HTTP {status}: {_reason(body)}"})
@@ -340,10 +397,57 @@ def import_flows(client, reader, bucket: str, idmap_: idmap_mod.IdMap,
         result.created.append(new_id or flow_id)
         if new_id:
             idmap_.record(flow_id, new_id)
+        else:
+            # Map it NOW, not after the bucket: a later flow may hand off to it.
+            _map_flows_by_name(client, project_id, flow_type,
+                               {flow_id: payload}, idmap_)
     if confirm:
-        _map_flows_by_name(client, project_id, flow_type, reader.flows(bucket),
-                           idmap_)
+        _map_flows_by_name(client, project_id, flow_type, source, idmap_)
     return result
+
+
+def _hand_off_order(flows: dict) -> list[str]:
+    """Flow ids ordered so a flow comes after every flow it references.
+
+    Flows hand off to other flows by id (handOffFlow.handOffTo - seen on
+    ericstewart-6xpy, 2026-09-25: ACME_Main -> ACME_Sales/Support/General).
+    Imported in archive order, the caller went first and kept the source id.
+    A cycle cannot be ordered; its members keep archive order, and whichever
+    goes first reports the other as a dangling reference.
+    """
+    ids = set(flows)
+    refs: dict[str, set] = {}
+    for fid, payload in flows.items():
+        found: set = set()
+
+        def walk(node):
+            if isinstance(node, dict):
+                for v in node.values():
+                    walk(v)
+            elif isinstance(node, list):
+                for v in node:
+                    walk(v)
+            elif isinstance(node, str) and node in ids and node != fid:
+                found.add(node)
+
+        walk((payload or {}).get("document"))
+        refs[fid] = found
+
+    ordered: list[str] = []
+    state: dict[str, str] = {}
+
+    def visit(fid: str) -> None:
+        if state.get(fid):            # done, or on the stack (a cycle): stop
+            return
+        state[fid] = "visiting"
+        for dep in sorted(refs[fid]):
+            visit(dep)
+        state[fid] = "done"
+        ordered.append(fid)
+
+    for fid in flows:
+        visit(fid)
+    return ordered
 
 
 def _map_flows_by_name(client, project_id: str, flow_type: str,
@@ -410,6 +514,7 @@ def import_functions(client, reader, idmap_: idmap_mod.IdMap,
             result.failed.append({"id": fn_id,
                                   "detail": f"{type(exc).__name__}: {exc}"})
             continue
+        _stop_if_rejected(status, result, fn_id, "flows:functions")
         if status >= 400:
             result.failed.append({"id": fn_id,
                                   "detail": f"HTTP {status}: {_reason(body)}"})
@@ -436,6 +541,9 @@ def import_calling(client, reader, names: list[str], idmap_: idmap_mod.IdMap,
             try:
                 existing_rows = client.list_all(spec["list"].replace("{locationId}", ""))
             except Exception as exc:
+                if isinstance(exc, ApiError) and exc.status in REJECTED:
+                    raise AuthRejected(f"the target rejected the token (HTTP "
+                                       f"{exc.status}) while listing {name}") from exc
                 # Same reasoning as the location branch below: an empty index
                 # here is indistinguishable from "the target has none of these",
                 # so every item would be re-created on every run. Report it.
@@ -459,6 +567,9 @@ def import_calling(client, reader, names: list[str], idmap_: idmap_mod.IdMap,
                     existing_rows.extend(client.list_all(
                         spec["list"].replace("{locationId}", loc_id)))
             except Exception as exc:
+                if isinstance(exc, ApiError) and exc.status in REJECTED:
+                    raise AuthRejected(f"the target rejected the token (HTTP "
+                                       f"{exc.status}) while listing {name}") from exc
                 # An empty index here would silently let every item be
                 # re-created as a duplicate on every re-run - that has to be
                 # visible in the report, not swallowed.
@@ -527,6 +638,7 @@ def import_calling(client, reader, names: list[str], idmap_: idmap_mod.IdMap,
                 result.failed.append({"id": source_id,
                                       "detail": f"{type(exc).__name__}: {exc}"})
                 continue
+            _stop_if_rejected(status, result, source_id, f"calling:{name}")
             if status >= 400:
                 result.failed.append({"id": source_id,
                                       "detail": f"HTTP {status}: {_reason(body)}"})
@@ -559,13 +671,31 @@ def run_import(cc, wx, reader, keys: list[str], on_conflict: str, confirm: bool,
         # Flow documents embed the source org id; it must become the target org.
         seed.record(source_org, target_org_id)
 
-    results, idmap_ = import_cc(cc, reader, keys, on_conflict, confirm,
-                                on_progress=on_progress, idmap_=seed)
+    results: dict[str, ImportResult] = {}
 
     def done(name: str, r: ImportResult) -> None:
         results[name] = r
         if on_progress:
             on_progress(name, r)
+
+    try:
+        return _run_steps(cc, wx, reader, keys, on_conflict, confirm,
+                          overwrite_flows, seed, results, done)
+    except auth.AuthError as exc:
+        # Report everything that DID happen before the token was refused.
+        partial = getattr(exc, "result", None)
+        if partial is not None and partial.entity not in results:
+            done(partial.entity, partial)
+        exc.results = results
+        raise
+
+
+def _run_steps(cc, wx, reader, keys, on_conflict, confirm, overwrite_flows,
+               seed, results, done) -> dict[str, ImportResult]:
+    cc_results, idmap_ = import_cc(cc, reader, keys, on_conflict, confirm,
+                                   on_progress=done, idmap_=seed)
+    for name, r in cc_results.items():
+        results.setdefault(name, r)
 
     for bucket in ("subflows", "flows"):
         if f"flows:{bucket}" in keys:

@@ -92,7 +92,7 @@ you are the one who has to know that *before* the old tenant is gone.
 | Contact Center config (25 entities — see [§1a](#1a-the-25-contact-center-entities)) | yes | yes | dependency-ordered, ids remapped |
 | Flows and Subflows | yes | yes | subflows are imported before flows; the project id and the flowType that selects a Subflow are tenant-specific facts recorded in `docs/api-notes.md` (see the callout below) |
 | Functions | yes | yes | export returns JSON; import requires `multipart/form-data` — the two are asymmetric on Cisco's side, not a quirk of this tool. The multipart field name is also recorded in `docs/api-notes.md` |
-| Audio Files | yes | **partial** | the audio bytes ARE captured in the archive under `cc/audio/`, but re-uploading them on import is not implemented as multipart — see [§10](#10-troubleshooting) |
+| Audio Files | yes | yes | the recordings are captured in the archive under `cc/audio/` and uploaded on import (from v0.1.2) |
 | Contact Center Users | yes | **no** | `/organization/{orgId}/user` publishes `GET` only — there is no `POST`. Invite and license each person in Control Hub, then use `users/users.csv` to reapply their site/team/profile/skill assignments by hand ([§8](#8-users-the-manual-step)) |
 | Webex Calling (12 objects — see [§1b](#1b-the-12-webex-calling-objects)) | yes | yes | location-scoped; needs Calling OAuth scopes that the shipped `.env.example` does not request by default |
 | **Channels** | yes | yes | **captured as entry points.** A Channel is not a separate resource — it is an entry point whose `channelType` is not `TELEPHONY` (`EMAIL`, `CHAT`, `SOCIAL_CHANNEL`, `VIDEO`, `FAX`, `CUSTOM_MESSAGING`, `WORK_ITEM`, `OTHERS`). `EntryPointDTO` carries `channelType`, `socialChannelType`, `assetId`, `subscriptionId`. The exporter sweeps every channel type, because the unfiltered listing hides `systemInternal` rows — on a live tenant it returned 10 entry points while `?channelTypes=TELEPHONY` returned 11. An earlier version of this guide said Channels had no API; that was wrong |
@@ -128,7 +128,7 @@ export-only, because its collection publishes `GET` only.
 | `business-hours` | Business Hours | yes |
 | `holiday-list` | (Business Hours dependency) | yes |
 | `overrides` | (Business Hours dependency) | yes |
-| `audio-file` | Audio Files | yes — see the partial-import note above |
+| `audio-file` | Audio Files | yes |
 | `cad-variable` | Global Variables | yes |
 | `entry-point` | **Channels** + (Queue dependency) | yes — swept across every `channelType` |
 | `dial-number` | (Entry Point dependency) | yes |
@@ -158,7 +158,7 @@ export-only, because its collection publishes `GET` only.
 | `agent-profile` | Desktop Profiles | yes |
 | `auxiliary-code` | Idle/Wrap-up Codes | yes |
 | `work-type` | (Aux Code dependency) | yes |
-| `agent-personal-greeting` | Agent Personal Greetings | yes — **shape unverified**, the probed tenant had none |
+| `agent-personal-greeting` | Agent Personal Greetings | records only — the export does not download the greeting recordings, so import reports each one as "no recording in the archive". Record them again in Control Hub |
 
 Three of these — `contact-number`, `dial-plan`, `agent-personal-greeting` —
 were added on 2026-09-23 after a live probe found the exporter was silently
@@ -579,12 +579,15 @@ Three things worth knowing:
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `401` on any API call | The stored access token has expired | `python -m wxcc_export auth login` again for that profile |
+| `STOPPED: the target tenant rejected this profile's token (HTTP 401)` | The token has expired. A personal token from developer.webex.com lasts 12 hours | Put a fresh token in that profile's `.env` file (or `auth login` again for OAuth2) and re-run the dry run. Nothing was written |
+| `STOPPED: the target rejected the token ... while writing <object>` | The token expired part-way through a confirmed import | Get a fresh token and re-run the same command. Everything created before the stop is reported, and is skipped by name on the re-run |
+| Target shows as `(org name unavailable) [subscription type unknown]` | The token could not read the tenant: usually expired, or not an admin on that tenant | Check the token before trusting anything else the run prints |
 | `403` on Calling objects only | The token's scopes don't include Calling. `.env.example`'s default `WXCC_SCOPES` only requests `cjp:config_read cjp:config`, not the `spark-admin:telephony_config_*` family | Add `spark-admin:telephony_config_read` (and `_write` for import) to `WXCC_SCOPES` in your `.env`, grant them on the Integration, and `auth login` again. See U5 in `docs/api-notes.md` for whether the sandbox even has Calling provisioned |
 | `404` on flows | The `projectId` this tool derives (see `PROJECT_ID_MODE` in `export_flows.py`) doesn't match your tenant | Check U1 in `docs/api-notes.md`; if that file doesn't exist yet in your checkout, the value is provisional — see the callout in [§1](#1-what-this-does-and-does-not-do) |
 | `400 ... multimediaProfileId is required` (or any other `<field> is required`) | You imported an object without its dependency already present in the target — for example a `site` without its `multimedia-profile` | Import the missing dependency first, or widen `--select` to include it. `--select cc` (no narrower filter) always brings in the full dependency-ordered set |
 | Importing into the same tenant the archive came from | `import` refuses this outright, printing `REFUSING: the target tenant is the same org the archive came from` | Point `--profile` at the tenant you actually want to write to, not the one you exported from |
 | Two profiles report the same org id after `auth login` | The browser-session trap — see [§4](#4-the-browser-session-trap) | `auth logout` the wrong profile, open a genuinely fresh private window, and log in again |
-| `cc:audio-file` import shows `FAILED` (or `UNVERIFIED` naming an audio-related field) | Re-uploading audio bytes on import isn't implemented as a multipart upload yet — the create call currently sends JSON metadata only, and Cisco's `audio-file` endpoint is on record as not accepting a JSON body | Re-upload the audio file by hand in Control Hub, under the same name, then re-run the import (the name-match `skip` policy will pick it up as already present) |
+| `cc:audio-file` import shows `FAILED ... no recording in the archive` | The archive has the audio record but not its recording (for example an archive where the audio download failed) | Upload that file by hand in Control Hub under the same name, then re-run the import: it will be skipped as already present |
+| `cc:audio-file` import shows `FAILED ... HTTP 4xx/5xx` | The upload was rejected. The upload format was verified against a live tenant by a sibling project, but has not yet been run by this tool against a real tenant | Send the error text to the maintainer; upload that file by hand in Control Hub meanwhile |
 | `user: read-only through the API - ... to create by hand` | Expected: there is no create endpoint for users | See [§8](#8-users-the-manual-step) |
 | Flow Designer: "Unable to import Subflow {{ name }} ... Flow name is empty" | The flow file came from a v0.1.0 archive, where each flow is wrapped in an envelope | Re-export with v0.1.1 or later, or see [§5, Flow files](#flow-files-in-the-archive) |

@@ -11,7 +11,7 @@ there, whether it arrived at provisioning or from an earlier import.
 
 from __future__ import annotations
 
-from . import registry
+from . import auth, registry
 from .client import ApiError
 
 CONFLICT_POLICIES = ("skip", "update", "rename")
@@ -54,11 +54,21 @@ def index_existing(client, entity: str) -> dict[str, dict]:
     A failure returns {} and the caller treats every source object as new. That
     is the safe direction: the API rejects a duplicate name, so a bad index
     causes a visible 400, not a silent overwrite.
+
+    EXCEPT a rejected token (401/403), which raises. Read as "the target is
+    empty", an expired token made a dry run plan a create for everything and
+    look clean (2026-09-25).
     """
     field = registry.name_field(entity)
     try:
         rows = client.list_all(registry.list_path(entity))
-    except (ApiError, Exception):
+    except ApiError as exc:
+        if exc.status in (401, 403):
+            raise auth.AuthError(
+                f"the target rejected the token while listing {entity} "
+                f"(HTTP {exc.status})") from exc
+        return {}
+    except Exception:
         return {}
     return {str(r.get(field, "")).strip().lower(): r
             for r in rows if r.get(field)}

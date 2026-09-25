@@ -239,9 +239,8 @@ tenant's count, minus any object reported FAILED or skipped as a default.
 **Expected:** the call reaches the imported queue and plays the imported audio
 prompt. This is the only case that proves the configuration is functional
 rather than merely present.
-**Known gap:** import does not re-upload audio files (see CHANGELOG, Known
-limitations). Upload each prompt in Control Hub before this test, or expect
-it to fail at the prompt.
+**Note:** audio is uploaded from v0.1.2. Check that the prompt you hear is
+the imported one, not a default.
 **Observed:** ______________________  **PASS / FAIL**
 
 ## R. Release executable

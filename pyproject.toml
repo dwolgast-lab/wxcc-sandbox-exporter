@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wxcc-sandbox-exporter"
-version = "0.1.1"
+version = "0.1.2"
 description = "Export and import Webex Contact Center sandbox tenant configuration"
 requires-python = ">=3.11"
 dependencies = []

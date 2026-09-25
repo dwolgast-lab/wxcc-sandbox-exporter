@@ -176,6 +176,7 @@ def test_import_dispatches_flows_functions_and_calling(monkeypatch):
     monkeypatch.setattr(web.importer, "import_functions", fake_import_functions)
     monkeypatch.setattr(web.importer, "import_calling", fake_import_calling)
     monkeypatch.setattr(web.archive, "ArchiveReader", lambda path: FakeReader())
+    monkeypatch.setattr(web.tenant, "check_access", lambda c: 200)
 
     with running_server(CFG) as base:
         status, body = _post(base, "/api/import", {
@@ -262,6 +263,7 @@ def test_import_requires_the_session_token(monkeypatch):
     monkeypatch.setattr(web.importer, "import_cc",
                         lambda *a, **kw: calls.append("called") or (({}, IdMap())))
     monkeypatch.setattr(web.archive, "ArchiveReader", lambda path: FakeReader())
+    monkeypatch.setattr(web.tenant, "check_access", lambda c: 200)
 
     with running_server(CFG) as base:
         status, body = _post(base, "/api/import",

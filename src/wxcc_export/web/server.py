@@ -127,12 +127,25 @@ def make_handler(cfg: dict, token: str, own_origin: str):
                 on_conflict = payload.get("onConflict", "skip")
                 confirm = bool(payload.get("confirm", False))
 
+                access = tenant.check_access(cc)
+                if access in importer.REJECTED:
+                    reader.close()
+                    return self._json(401, {
+                        "error": f"the target rejected this profile's token "
+                                 f"(HTTP {access}) - get a fresh token. "
+                                 "Nothing was written."})
                 # The same sequence the CLI runs - one implementation.
-                results = importer.run_import(cc, wx, reader, keys, on_conflict,
-                                              confirm, target_org_id=org_id)
+                stopped = None
+                try:
+                    results = importer.run_import(cc, wx, reader, keys,
+                                                  on_conflict, confirm,
+                                                  target_org_id=org_id)
+                except auth.AuthError as exc:
+                    results, stopped = getattr(exc, "results", {}), str(exc)
 
                 reader.close()
-                return self._json(200, {"results": {
+                return self._json(401 if stopped else 200, {
+                    "stopped": stopped, "results": {
                     k: {"summary": r.summary(), "failed": r.failed,
                         "unverified": r.unverified, "manual": r.manual,
                         "dangling": sorted(r.dangling)}

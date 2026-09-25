@@ -48,7 +48,9 @@ def test_index_existing_keys_case_insensitively(transport):
 
 
 def test_index_existing_is_empty_when_the_list_fails(transport):
-    transport.add("GET /organization/ORG1/v2/site", status=403, body={})
+    # A server error falls back to "treat as new". A 401/403 does NOT - see
+    # test_auth_rejection.py: an expired token is not an empty tenant.
+    transport.add("GET /organization/ORG1/v2/site", status=500, body={})
     assert plan.index_existing(make(transport), "site") == {}
 
 

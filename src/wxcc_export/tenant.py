@@ -67,6 +67,19 @@ def org_info(client, webex_client=None) -> dict:
     }
 
 
+def check_access(client) -> int | None:
+    """HTTP status of the org's own record with this token (None: unreachable).
+
+    org_info swallows errors on purpose (a missing name is cosmetic); this is
+    the check that a write is worth attempting at all.
+    """
+    try:
+        status, _ = client.json("GET", f"organization/{client.org_id}")
+    except Exception:
+        return None
+    return status
+
+
 def safe_slug(name: str) -> str:
     """Make a tenant name safe to use as a filename component."""
     slug = _UNSAFE.sub("-", (name or "").strip()).strip("-.")

@@ -24,18 +24,22 @@ EXIT_OK, EXIT_USAGE, EXIT_AUTH, EXIT_PARTIAL = 0, 1, 2, 3
 
 
 def build_parser() -> argparse.ArgumentParser:
-    # A shared parent so --profile is accepted both before AND after the
-    # subcommand (`wxcc-export --profile x export` and `wxcc-export export
-    # --profile x`) - argparse does not propagate a top-level optional into a
-    # chosen subparser on its own.
+    # --profile is accepted both before AND after the subcommand
+    # (`wxcc-export --profile x export` and `wxcc-export export --profile x`).
+    # The subcommands' copy MUST default to SUPPRESS: with default=None, the
+    # subparser wrote None over a --profile given before the subcommand, and
+    # the run silently used .env instead (seen 2026-09-25).
+    top = argparse.ArgumentParser(add_help=False)
+    top.add_argument("--profile", default=None,
+                     help="use .env.<profile> and its own token store")
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--profile", default=None,
+    common.add_argument("--profile", default=argparse.SUPPRESS,
                         help="use .env.<profile> and its own token store")
 
     p = argparse.ArgumentParser(
         prog="wxcc-export",
         description="Export and import Webex Contact Center sandbox configuration.",
-        parents=[common])
+        parents=[top])
     p.add_argument("--version", action="version",
                    version=f"%(prog)s {__version__}")
     sub = p.add_subparsers(dest="command", required=True)
@@ -223,13 +227,28 @@ def _run_import(cfg: dict, args) -> int:
         print("\nREFUSING: the target tenant is the same org the archive came "
               "from. Point --profile at the NEW sandbox.", file=sys.stderr)
         return EXIT_USAGE
+    access = tenant.check_access(cc)
+    if access in importer.REJECTED:
+        reader.close()
+        print(f"\nSTOPPED: the target tenant rejected this profile's token "
+              f"(HTTP {access}). A personal token from developer.webex.com "
+              "expires 12 hours after it is created - put a fresh one in "
+              f"{config.env_file(cfg.get('profile')).name} and run the dry run "
+              "again. (403 can also mean the account is not a Contact Center "
+              "administrator on this tenant.) Nothing was written.",
+              file=sys.stderr)
+        return EXIT_AUTH
     if not args.confirm:
         print("\nDRY RUN - nothing will be written. Add --confirm to apply.\n")
 
-    results = importer.run_import(
-        cc, wx, reader, keys, args.on_conflict, args.confirm,
-        target_org_id=info.get("org_id"), overwrite_flows=args.overwrite_flows,
-        on_progress=lambda _name, r: print(f"  {r.summary()}"))
+    stopped = None
+    try:
+        results = importer.run_import(
+            cc, wx, reader, keys, args.on_conflict, args.confirm,
+            target_org_id=info.get("org_id"), overwrite_flows=args.overwrite_flows,
+            on_progress=lambda _name, r: print(f"  {r.summary()}"))
+    except auth.AuthError as exc:
+        results, stopped = getattr(exc, "results", {}), str(exc)
 
     failed = sum(len(r.failed) for r in results.values())
     unverified = sum(len(r.unverified) for r in results.values())
@@ -254,6 +273,11 @@ def _run_import(cfg: dict, args) -> int:
             print(f"    ... and {len(dangling) - 15} more")
 
     reader.close()
+    if stopped:
+        print(f"\nSTOPPED: {stopped}. No further writes were sent. Get a fresh "
+              "token and re-run: objects already created are skipped by name.",
+              file=sys.stderr)
+        return EXIT_AUTH
     if not args.confirm:
         print("\nDry run complete. Nothing was written.")
         return EXIT_OK

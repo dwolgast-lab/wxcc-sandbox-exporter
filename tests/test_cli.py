@@ -45,6 +45,22 @@ def test_profile_flag_is_accepted_on_every_command():
         assert args.profile == "target"
 
 
+def test_profile_before_the_subcommand_is_not_overwritten():
+    # Seen 2026-09-25: `wxcc-export --profile newsandbox import x.zip` ran
+    # against .env, because the subcommand's --profile default (None)
+    # overwrote the value parsed before it.
+    for argv in (["export"], ["import", "a.zip"], ["auth", "status"]):
+        args = cli.build_parser().parse_args(["--profile", "target"] + argv)
+        assert args.profile == "target", argv
+
+
+def test_profile_defaults_to_none_and_the_later_one_wins():
+    assert cli.build_parser().parse_args(["export"]).profile is None
+    args = cli.build_parser().parse_args(
+        ["--profile", "a", "export", "--profile", "b"])
+    assert args.profile == "b"
+
+
 def test_inspect_prints_the_manifest_summary(tmp_path, capsys):
     from wxcc_export import archive
     p = tmp_path / "t-export.zip"
