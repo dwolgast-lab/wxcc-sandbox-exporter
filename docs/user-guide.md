@@ -309,7 +309,29 @@ Flags:
 |---|---|
 | `--out DIR` | write the archive into `DIR` instead of the current directory |
 | `--select all\|cc\|flows\|calling\|<comma-separated keys>` | export only part of the scope. Keys look like `cc:site`, `flows:functions`, `calling:locations` — see `inspect` output on an existing archive for the exact key spelling |
-| `--only-non-default` | drop objects the `createdTime`-clustering heuristic flags as provisioning defaults. **Off by default, and you should think hard before turning it on**: there is no `isDefault` field on any WxCC object, so this is a heuristic (anything created within 120 seconds of the tenant's earliest object is guessed to be a default) — a false positive here silently drops real configuration from the archive |
+| `--only-non-default` | drop objects tagged as provisioning defaults. **Off by default, and you should think hard before turning it on.** 14 of the 25 entities carry a real `systemDefault` flag, which is used where present. The other 11 fall back to a heuristic: anything created within 30 minutes of the tenant's earliest object is guessed to be a default. A false positive there silently drops real configuration from the archive. Each object records which rule tagged it in `default_basis` |
+
+### Flow files in the archive
+
+Every flow, subflow and function is stored as its own file under
+`flows/flows/`, `flows/subflows/` and `flows/functions/`. It is named
+`<Flow_Name>.json`, the same way Flow Designer names its own exports. Each
+file is the plain Flow Designer document, so you can import a single flow by
+hand: unzip the archive, open Flow Designer in the new tenant, and import the
+file.
+
+When you import a flow this way, nothing is remapped. The flow still points
+at the old tenant's queues, entry points and audio files, so reselect those
+in Flow Designer afterwards, and import subflows before the flows that use
+them. `import` does the remapping for you.
+
+If two flows would get the same file name, the second one's id is appended:
+`<Flow_Name>__<id>.json`.
+
+Archives made by v0.1.0 wrapped each flow in a `{"meta", "document"}`
+envelope, which Flow Designer rejects with "Flow name is empty". v0.1.1 and
+later still import those archives; only hand-importing their flow files
+fails. Re-export with v0.1.1 or later to get native files.
 
 ### Reading `inspect`
 
@@ -393,8 +415,7 @@ yourself to get that ordering.
 
 This is worth being explicit about: **without `--confirm`, the command
 always exits 0**, even if the printed plan shows objects that would fail
-(for example, selecting `cc:user`, which is always refused — see
-[§7](#7-reading-the-import-summary)) or references that would dangle. A dry
+or references that would dangle. A dry
 run's job is to show you the plan; read the printed summary, not just the
 exit code, before deciding to add `--confirm`. Only a **confirmed** run's
 exit code reflects whether anything actually went wrong (`0` clean, `3` if
@@ -404,20 +425,46 @@ anything failed, was unverified, or left a dangling reference).
 
 ## 7. Reading the import summary
 
-Every import — dry run or confirmed — ends with a per-object line like:
+Every import prints one line per object type. A dry run says what it
+**would** do:
+
+```
+site: 3 would be created, 0 would be updated, 5 skipped, 0 failed, 0 unverified
+```
+
+A confirmed run says what it **did**:
 
 ```
 site: 3 created, 0 updated, 5 skipped, 0 failed, 0 unverified
 ```
+
+`skipped` means an object with the same name already exists in the target:
+a provisioning default, or something imported earlier. Skipped objects are
+still linked. Anything that referred to the source object is pointed at the
+target's existing one.
+
+Two kinds of line only appear when they apply:
+
+```
+entry-point:links: 0 created, 10 updated, 0 skipped, 0 failed, 0 unverified
+user: read-only through the API - 3 of 13 already in the target (linked by email), 10 to create by hand
+```
+
+- **`<entity>:links`**: some objects refer to each other in a loop. Entry
+  points point at flows, flows point at dial numbers, and dial numbers point
+  at entry points. Desktop layouts and teams point at each other. The
+  importer breaks each loop by creating the object without the link, then
+  setting the link once the other object exists. These lines report that
+  second step: entry points' `flowId` and `outdialQueueId`, and desktop
+  layouts' `teamIds`.
+- **`user`**: see [§8](#8-users-the-manual-step).
 
 and, when there's something to report, a detail section underneath:
 
 - **`FAILED`** — the create or update call itself did not succeed (a
   non-2xx response, a network error, or a response that carried no `id` to
   record). The detail line names the entity, the source id, and the API's
-  own error text. Nothing was written for that object. `cc:user` always
-  reports `FAILED ... user is read-only through this API` for every row,
-  by design — see [§8](#8-users-the-manual-step).
+  own error text. Nothing was written for that object.
 
 - **`UNVERIFIED`** — **this is a real problem, not a warning to skim past.**
   After every confirmed write, the importer re-reads the object from the API
@@ -432,16 +479,21 @@ and, when there's something to report, a detail section underneath:
   Treat every `UNVERIFIED` object as needing a manual check in Control Hub
   before you trust it.
 
-- **Dangling references** — after the summary, a count of id-shaped strings
-  found in the payloads sent that have **no** recorded old-id → new-id
-  mapping. This means some part of an imported object still points at a
-  source-tenant id that was never created in the target — most commonly
-  because you selected a narrower `--select` than the object's dependencies
-  needed (importing `cc:team` without `cc:site` leaves every team's site
-  reference dangling), or because the object it should have pointed at
-  failed to import. The target will either reject the dangling id outright
-  or silently store a broken link, depending on the field; either way,
-  widen `--select` to include the missing dependency and re-run.
+- **Dangling references** — after the summary, the ids of **objects in
+  the archive** that something being imported points at, but that have no
+  counterpart in the target. Usually this is because you selected a
+  narrower `--select` than the object's dependencies needed: importing
+  `cc:team` without `cc:site` leaves every team's site reference dangling.
+  It also happens when the object failed to import, or when it is a user
+  who hasn't been invited to the new tenant yet. The target will either
+  reject the dangling id outright or store a broken link, depending on the
+  field. Widen `--select`, or invite the missing users, and re-run.
+
+  Only ids of objects that are in the archive are counted. Flow node names,
+  Cisco catalog ids and similar values are ignored. v0.1.0 counted them,
+  which inflated this number into the hundreds. The trade-off is a blind
+  spot: a reference to something the tool never exports, such as a flow's
+  connector, is not reported.
 
 A confirmed run exits **0** only when `failed`, `unverified`, and dangling
 references are all empty across every selected object. Any of the three
@@ -455,9 +507,15 @@ Contact Center Users cannot be created or updated through this API — full
 stop. `/organization/{orgId}/user` publishes `GET` only; there is no `POST`.
 This is confirmed twice over: the OpenAPI document omits the operation, and
 Cisco's own registry notes record "Users are created/deleted in Control Hub,
-not here." Selecting `cc:user` on import always reports every user as
-`FAILED ... read-only`, and nothing is written — the tool refuses rather
-than silently skipping, so you always see the reason.
+not here." Selecting `cc:user` on import writes nothing. The summary line
+shows how many of the archive's users **already exist** in the target,
+matched by email, and how many you still need to create by hand. This is a
+manual step, not a failure, so it doesn't affect the exit code.
+
+Users that already exist are **linked**: a team's member list (`userIds`)
+is rewritten to point at the target's user ids. Anyone not yet invited is
+reported as a dangling reference, and that team is created without them.
+**Invite users before you import** if you want team membership carried over.
 
 What the export gives you instead is `users/users.json` and
 `users/users.csv` — a reference manifest, one row per Contact Center user,
@@ -528,4 +586,5 @@ Three things worth knowing:
 | Importing into the same tenant the archive came from | `import` refuses this outright, printing `REFUSING: the target tenant is the same org the archive came from` | Point `--profile` at the tenant you actually want to write to, not the one you exported from |
 | Two profiles report the same org id after `auth login` | The browser-session trap — see [§4](#4-the-browser-session-trap) | `auth logout` the wrong profile, open a genuinely fresh private window, and log in again |
 | `cc:audio-file` import shows `FAILED` (or `UNVERIFIED` naming an audio-related field) | Re-uploading audio bytes on import isn't implemented as a multipart upload yet — the create call currently sends JSON metadata only, and Cisco's `audio-file` endpoint is on record as not accepting a JSON body | Re-upload the audio file by hand in Control Hub, under the same name, then re-run the import (the name-match `skip` policy will pick it up as already present) |
-| `cc:user` reports every row `FAILED ... read-only` | Expected — there is no create endpoint for users | See [§8](#8-users-the-manual-step) |
+| `user: read-only through the API - ... to create by hand` | Expected: there is no create endpoint for users | See [§8](#8-users-the-manual-step) |
+| Flow Designer: "Unable to import Subflow {{ name }} ... Flow name is empty" | The flow file came from a v0.1.0 archive, where each flow is wrapped in an envelope | Re-export with v0.1.1 or later, or see [§5, Flow files](#flow-files-in-the-archive) |

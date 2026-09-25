@@ -151,8 +151,22 @@ def test_dangling_references_are_reported(transport):
 
 
 def test_a_read_only_entity_is_refused(transport):
+    transport.add("GET /organization/ORG1/v2/user", body={"data": []})
     res = importer.import_entity(make(transport), "user",
-                                 [{"id": "u1", "name": "Ann"}],
+                                 [{"id": "u1", "email": "ann@example.com"}],
                                  idmap.IdMap(), "skip", confirm=True)
-    assert res.failed[0]["detail"].startswith("user is read-only")
-    assert transport.calls == []
+    # Nothing written - reported as a manual step, not a failure.
+    assert res.failed == []
+    assert res.manual == [{"id": "u1", "name": "ann@example.com", "inTarget": False}]
+    assert all(c["method"] == "GET" for c in transport.calls)
+
+
+def test_users_already_in_the_target_are_mapped_by_email(transport):
+    transport.add("GET /organization/ORG1/v2/user",
+                  body={"data": [{"id": "U9", "email": "Ann@Example.com"}]})
+    m = idmap.IdMap()
+    res = importer.import_entity(make(transport), "user",
+                                 [{"id": "u1", "email": "ann@example.com"}],
+                                 m, "skip", confirm=True)
+    assert m.get("u1") == "U9" and res.manual[0]["inTarget"] is True
+    assert all(c["method"] == "GET" for c in transport.calls)

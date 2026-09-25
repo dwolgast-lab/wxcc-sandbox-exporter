@@ -12,11 +12,17 @@ import re
 import zipfile
 from pathlib import Path
 
-from . import registry
+from . import __version__, registry
 
-SCHEMA_VERSION = 1
+# 2: each flow/subflow/function file is the native Flow Designer document,
+#    named <Flow_Name>.json like Flow Designer's own export, with the id -> file
+#    index and listing metadata in the manifest. Schema 1 wrapped every flow in
+#    {"meta", "document"}, which Flow Designer cannot import ("Flow name is
+#    empty", seen 2026-09-25).
+SCHEMA_VERSION = 2
+READABLE_SCHEMA_VERSIONS = (1, 2)
 TOOL_NAME = "wxcc-sandbox-exporter"
-TOOL_VERSION = "0.1.0"
+TOOL_VERSION = __version__
 
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -149,12 +155,30 @@ def write_export(path, source: dict, cc: dict, children: dict, audio: dict,
             sections["cc"]["audio"] = audio_index
 
         # --- flows / subflows / functions ---
-        for bucket in ("flows", "subflows"):
-            for flow_id, payload in (flows or {}).get(bucket, {}).items():
-                w.add_json(f"flows/{bucket}/{_safe_component(flow_id)}.json", payload)
-        for fn_id, payload in (functions or {}).get("functions", {}).items():
-            w.add_json(f"flows/functions/{_safe_component(fn_id)}.json", payload)
+        # Each file is the native document, so it imports straight into Flow
+        # Designer. The id -> file index lives in the manifest.
+        flow_items: dict = {}
+        buckets = [(b, (flows or {}).get(b, {})) for b in ("flows", "subflows")]
+        buckets.append(("functions", (functions or {}).get("functions", {})))
+        for bucket, entries in buckets:
+            used: set[str] = set()
+            index: dict = {}
+            for item_id, payload in entries.items():
+                doc = (payload or {}).get("document")
+                meta = (payload or {}).get("meta") or {}
+                name = _safe_component((doc or {}).get("name") or meta.get("name")
+                                       or item_id)
+                # Case-insensitive: two names differing only by case would
+                # overwrite each other when unzipped on Windows.
+                if name.lower() in used:
+                    name = f"{name}__{_safe_component(item_id)}"
+                used.add(name.lower())
+                fname = f"flows/{bucket}/{name}.json"
+                w.add_json(fname, doc)
+                index[item_id] = {"file": fname, "meta": meta}
+            flow_items[bucket] = index
         sections["flows"] = {
+            "items": flow_items,
             "flows": len((flows or {}).get("flows", {})),
             "subflows": len((flows or {}).get("subflows", {})),
             "functions": len((functions or {}).get("functions", {})),
@@ -217,10 +241,11 @@ class ArchiveReader:
                 f"{self.path.name} has no manifest.json - it was not produced by "
                 f"{TOOL_NAME}") from exc
         version = self.manifest.get("schemaVersion")
-        if version != SCHEMA_VERSION:
+        if version not in READABLE_SCHEMA_VERSIONS:
             raise IncompatibleArchive(
                 f"archive schemaVersion {version} but this tool reads "
-                f"{SCHEMA_VERSION}. Re-export with a matching tool version.")
+                f"{', '.join(map(str, READABLE_SCHEMA_VERSIONS))}. "
+                "Re-export with a matching tool version.")
 
     # --- raw access ---
     def read_json(self, name: str) -> object:
@@ -259,6 +284,14 @@ class ArchiveReader:
         return self.read_bytes(entry["file"]) if entry else None
 
     def flows(self, bucket: str) -> dict[str, dict]:
+        """{id: {"meta": ..., "document": ...}} for either schema."""
+        items = (self.manifest.get("sections", {}).get("flows", {})
+                 .get("items"))
+        if items is not None:
+            return {fid: {"meta": e.get("meta") or {},
+                          "document": self.read_json(e["file"])}
+                    for fid, e in items.get(bucket, {}).items()}
+        # schema 1: one {"meta", "document"} wrapper per file, named by id
         out: dict[str, dict] = {}
         prefix = f"flows/{bucket}/"
         for name in self._zip.namelist():
@@ -280,6 +313,28 @@ class ArchiveReader:
     def users(self) -> list[dict]:
         doc = self.read_json("users/users.json") or {}
         return doc.get("users", [])
+
+    def source_ids(self) -> set[str]:
+        """Every object id this archive holds, plus the source org id.
+
+        This is what makes dangling-reference reporting exact: a value is a
+        broken link only if it is provably the id of a source object.
+        """
+        ids: set[str] = set()
+        sections = self.manifest.get("sections", {})
+        for entity in sections.get("cc", {}).get("entities", {}):
+            ids |= {i.get("id") for i in self.entity_items(entity)}
+        for entity in sections.get("cc", {}).get("children", {}):
+            for items in self.children(entity).values():
+                ids |= {i.get("id") for i in items}
+        for name in sections.get("calling", {}).get("objects", {}):
+            ids |= {i.get("id") for i in self.calling_items(name)}
+        for bucket in ("flows", "subflows"):
+            ids |= set(self.flows(bucket))
+        ids |= set(self.functions())
+        ids |= {u.get("id") for u in self.users() if isinstance(u, dict)}
+        ids.add(self.manifest.get("source", {}).get("orgId"))
+        return {i for i in ids if isinstance(i, str) and i}
 
     def close(self) -> None:
         self._zip.close()

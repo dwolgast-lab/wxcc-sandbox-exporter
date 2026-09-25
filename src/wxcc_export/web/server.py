@@ -127,31 +127,14 @@ def make_handler(cfg: dict, token: str, own_origin: str):
                 on_conflict = payload.get("onConflict", "skip")
                 confirm = bool(payload.get("confirm", False))
 
-                results, idmap_ = importer.import_cc(
-                    cc, reader, keys, on_conflict, confirm)
-
-                # Subflows before flows: a flow can invoke a subflow, never the
-                # reverse. Mirrors cli._run_import's sequencing.
-                for bucket in ("subflows", "flows"):
-                    if f"flows:{bucket}" in keys:
-                        results[f"flows:{bucket}"] = importer.import_flows(
-                            cc, reader, bucket, idmap_, confirm=confirm)
-                if "flows:functions" in keys:
-                    results["flows:functions"] = importer.import_functions(
-                        cc, reader, idmap_, confirm=confirm)
-
-                calling_names = [k.split(":", 1)[1] for k in keys
-                                 if k.startswith("calling:")]
-                if calling_names:
-                    for name, r in importer.import_calling(
-                            wx, reader, calling_names, idmap_, on_conflict,
-                            confirm).items():
-                        results[f"calling:{name}"] = r
+                # The same sequence the CLI runs - one implementation.
+                results = importer.run_import(cc, wx, reader, keys, on_conflict,
+                                              confirm, target_org_id=org_id)
 
                 reader.close()
                 return self._json(200, {"results": {
                     k: {"summary": r.summary(), "failed": r.failed,
-                        "unverified": r.unverified,
+                        "unverified": r.unverified, "manual": r.manual,
                         "dangling": sorted(r.dangling)}
                     for k, r in results.items()}})
 

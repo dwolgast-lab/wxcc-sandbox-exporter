@@ -18,7 +18,7 @@ import re
 # at best ignored and at worst a 400 ("New configuration cannot have an id").
 IDENTITY_FIELDS = frozenset({
     "id", "createdTime", "createdAt", "lastUpdatedTime", "version",
-    "likely_default", "_locationId", "organizationId", "orgId",
+    "likely_default", "default_basis", "_locationId", "organizationId", "orgId",
 })
 
 _UUID = re.compile(
@@ -50,6 +50,12 @@ class IdMap:
         self._map: dict[str, str] = {}
         self._pattern = None
         self._shortest = 0
+        # Every id the SOURCE archive holds. When set, unmapped() reports only
+        # these: a string is a dangling reference only if it is provably the id
+        # of a source object. Guessing from shape reported flow node names,
+        # event names and Cisco catalog ids as broken links (216 of 349 on a
+        # real archive, 2026-09-25).
+        self.known_source_ids: set[str] | None = None
 
     def record(self, old: str, new: str) -> None:
         if old and new:
@@ -105,8 +111,14 @@ class IdMap:
         These are dangling references: they point at objects that were not
         imported, so the target will either reject them or store a broken link.
         The importer surfaces them rather than letting a 200 imply success.
+
+        With known_source_ids set, only ids of objects in the source archive
+        count. That cannot see references to object types the tool never
+        exports (e.g. connectors) - a known, documented blind spot, preferred
+        over hundreds of false alarms that bury the real ones.
         """
         found: set[str] = set()
+        known = self.known_source_ids
 
         def walk(node):
             if isinstance(node, dict):
@@ -115,8 +127,8 @@ class IdMap:
             elif isinstance(node, list):
                 for v in node:
                     walk(v)
-            elif isinstance(node, str) and looks_like_id(node):
-                if node not in self._map:
+            elif isinstance(node, str) and node not in self._map:
+                if (node in known) if known is not None else looks_like_id(node):
                     found.add(node)
 
         walk(payload)

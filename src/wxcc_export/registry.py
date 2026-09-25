@@ -73,6 +73,9 @@ CC_ENTITIES: dict[str, dict] = {
     },
     "dial-number": {
         "list": "v2/dial-number", "item": "dial-number/{id}",
+        # No "name" field at all (4 of 4 rows, 2026-09-25): identity is the
+        # number. Without this every dial number was skipped as nameless.
+        "name_field": "dialledNumber",
         # VERIFIED 2026-09-23: the field is "dialledNumber", not "number".
         # DEPENDENCY WAS INVERTED: a dial-number carries entryPointId, and
         # GET entry-point/{id}/incoming-references reports ['dial-number'],
@@ -120,7 +123,11 @@ CC_ENTITIES: dict[str, dict] = {
     "desktop-layout": {
         "list": "v2/desktop-layout", "item": "desktop-layout/{id}",
         "create": ["name", "jsonFileName", "jsonFileContent",
-                   "defaultJsonModified", "status", "editedBy"], "deps": [], "writable": True,
+                   "defaultJsonModified", "status", "editedBy"],
+        # CYCLE (confirmed 2026-09-25 archive): a layout lists its teams in
+        # teamIds, and a team points at its layout via desktopLayoutId. Layouts
+        # are created first without teamIds, which are set after the teams exist.
+        "deps": [], "deferred": ["teamIds"], "writable": True,
     },
     "address-book": {
         "list": "v2/address-book", "item": "address-book/{id}",
@@ -173,6 +180,17 @@ CC_ENTITIES: dict[str, dict] = {
     },
     "entry-point": {
         "list": "v2/entry-point", "item": "entry-point/{id}",
+        # DEFERRED: flowId points at a flow, and flows are imported AFTER the
+        # Contact Center entities because a flow references dial numbers, which
+        # reference entry points - a genuine cycle (confirmed 2026-09-25: 10 of
+        # 11 entry points on davidwolgast-8xgo carry flowId). The importer
+        # creates the entry point without these fields and sets them once the
+        # flows exist. flowTagId is the label "Latest", not an id, so it stays.
+        # outdialQueueId (set on 2 of 11 there) is deferred too: queues are
+        # declared as depending on entry-point, so creating queues first is not
+        # an option. musicOnHoldId points at an audio file, which has no deps,
+        # so audio-file is simply ordered first.
+        "deferred": ["flowId", "outdialQueueId"],
         # CHANNELS LIVE HERE. A "Channel" in Control Hub is an entry point with
         # a non-TELEPHONY channelType - there is no separate Channels API.
         # Confirmed 2026-09-23: EntryPointDTO carries channelType,
@@ -191,7 +209,7 @@ CC_ENTITIES: dict[str, dict] = {
         "create": ["name", "entryPointType", "channelType",
                    "serviceLevelThreshold", "active", "maximumActiveContacts"],
         # Was ["dial-number"] - inverted, see the dial-number entry.
-        "deps": [], "writable": True,
+        "deps": ["audio-file"], "writable": True,
     },
     "agent-profile": {
         "list": "v2/agent-profile", "item": "agent-profile/{id}",
@@ -205,7 +223,8 @@ CC_ENTITIES: dict[str, dict] = {
     "team": {
         "list": "v2/team", "item": "team/{id}",
         "create": ["name", "active", "siteId", "teamStatus", "teamType"],
-        "deps": ["site", "multimedia-profile", "skill-profile"], "writable": True,
+        "deps": ["site", "multimedia-profile", "skill-profile",
+                 "desktop-layout"], "writable": True,
     },
     "contact-service-queue": {
         "list": "v2/contact-service-queue", "item": "contact-service-queue/{id}",
@@ -222,6 +241,7 @@ CC_ENTITIES: dict[str, dict] = {
     # --- read-only ---
     "user": {
         "list": "v2/user", "item": "user/{id}",
+        "name_field": "email",          # users carry no "name"
         "create": [], "deps": ["site", "team", "skill-profile", "user-profile",
                                "agent-profile", "multimedia-profile"],
         "writable": False,

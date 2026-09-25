@@ -120,8 +120,9 @@ not UUIDs.
 ### C1 - Dry run writes nothing
 Run: `python -m wxcc_export --profile new import <archive>`
 Then check Control Hub on the NEW tenant.
-**Expected:** the plan prints; the last line says nothing was written; Control
-Hub shows NO new objects.
+**Expected:** each line reads "N would be created, N would be updated"; the
+counts are not all 0 unless the target already has everything; the last line
+says nothing was written; Control Hub shows NO new objects.
 **Observed:** ______________________  **PASS / FAIL**
 
 ### C2 - The tool refuses to import into the source org
@@ -172,9 +173,26 @@ Import only `cc:team` without `cc:site`.
 **Expected:** the summary lists the unmapped site ids as broken references.
 **Observed:** ______________________  **PASS / FAIL**
 
-### C11 - Users are refused, with a reason
-Run with `--select cc:user --confirm`.
-**Expected:** reports `user is read-only through this API`; nothing is written.
+### C11 - Users are a manual step, and invited users are linked
+Invite one archived user to the NEW tenant first. Run with
+`--select cc:team,cc:user --confirm`.
+**Expected:** the user line reads `read-only through the API - 1 of N already
+in the target (linked by email)`, with no FAILED line; nothing is written for
+users; the imported team lists the invited user as a member.
+**Observed:** ______________________  **PASS / FAIL**
+
+### C11a - Entry points are linked to their imported flows
+Run a confirmed import including `cc:entry-point` and `flows:flows`.
+**Expected:** an `entry-point:links` line with 0 failed; in Control Hub, each
+imported entry point's routing flow is the NEW tenant's copy of the flow.
+**This is the first live test of creating an entry point without a flow.** If
+the create is rejected, record the error text.
+**Observed:** ______________________  **PASS / FAIL**
+
+### C11b - A flow file imports directly into Flow Designer
+Unzip a v0.1.1+ archive and import `flows/subflows/<Name>.json` in Flow
+Designer on the NEW tenant.
+**Expected:** it imports under its own name; no "Flow name is empty" error.
 **Observed:** ______________________  **PASS / FAIL**
 
 ### C12 - A clean import exits 0, a problematic one exits 3
@@ -265,7 +283,7 @@ not unstyled HTML.
 |---|---|---|---|
 | A Authentication | 5 | | |
 | B Export | 9 | | |
-| C Import | 12 | | |
+| C Import | 14 | | |
 | D Web UI | 5 | | |
 | E Round-trip | 2 | | |
 | R Release executable | 5 | | |

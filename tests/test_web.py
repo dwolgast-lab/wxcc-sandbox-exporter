@@ -28,6 +28,9 @@ class FakeReader:
         self.manifest = {"source": {"orgId": source_org_id, "orgName": "Source Co"}}
         self.closed = False
 
+    def source_ids(self):
+        return {self.manifest["source"]["orgId"]}
+
     def close(self):
         self.closed = True
 

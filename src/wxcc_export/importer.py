@@ -35,10 +35,31 @@ class ImportResult:
     failed: list = field(default_factory=list)
     unverified: list = field(default_factory=list)
     dangling: set = field(default_factory=set)
+    # Dry run: what a --confirm run would write. Without these a dry run could
+    # only ever print "0 created", which reads as "nothing to do".
+    dry_run: bool = False
+    would_create: list = field(default_factory=list)
+    would_update: list = field(default_factory=list)
+    # Objects the API cannot write at all (users) - a manual step, not a failure.
+    manual: list = field(default_factory=list)
+    note: str = ""
+    # Fields held back from the create and set after later imports (registry
+    # "deferred"): [{"source_id", "target_id", "held": {field: source value}}].
+    deferred: list = field(default_factory=list)
 
     def summary(self) -> str:
-        return (f"{self.entity}: {len(self.created)} created, "
-                f"{len(self.updated)} updated, {len(self.skipped)} skipped, "
+        if self.manual:
+            present = sum(1 for m in self.manual if m.get("inTarget"))
+            return (f"{self.entity}: read-only through the API - "
+                    f"{present} of {len(self.manual)} already in the target "
+                    f"(linked by {registry.name_field(self.entity)}), "
+                    f"{len(self.manual) - present} to create by hand")
+        if self.dry_run:
+            head = (f"{len(self.would_create)} would be created, "
+                    f"{len(self.would_update)} would be updated")
+        else:
+            head = f"{len(self.created)} created, {len(self.updated)} updated"
+        return (f"{self.entity}: {head}, {len(self.skipped)} skipped, "
                 f"{len(self.failed)} failed, "
                 f"{len(self.unverified)} unverified")
 
@@ -73,16 +94,25 @@ def verify_write(client, entity: str, new_id: str, sent: dict) -> list[str]:
 def import_entity(client, entity: str, items: list[dict],
                   idmap_: idmap_mod.IdMap, on_conflict: str,
                   confirm: bool) -> ImportResult:
-    result = ImportResult(entity=entity)
+    result = ImportResult(entity=entity, dry_run=not confirm)
     spec = registry.CC_ENTITIES.get(entity, {})
 
     if not spec.get("writable", False):
-        note = spec.get("note", "")
-        result.failed.append({
-            "id": None,
-            "detail": f"{entity} is read-only through this API - "
-                      f"nothing was written. {note}"})
+        # Expected, not an error: a failure here made every clean run exit 3.
+        # Nothing is written, but objects that already exist in the target
+        # (users invited there by hand) are MAPPED by name/email, so a team's
+        # userIds point at the target's users instead of the source's.
+        field_ = registry.name_field(entity)
+        existing = plan.index_existing(client, entity)          # GET only
+        for i in items:
+            match = existing.get(str(i.get(field_, "")).strip().lower())
+            if match and i.get("id") and match.get("id"):
+                idmap_.record(i["id"], match["id"])
+            result.manual.append({"id": i.get("id"), "name": i.get(field_),
+                                  "inTarget": bool(match)})
+        result.note = spec.get("note", "")
         return result
+    deferred_fields = spec.get("deferred", [])
 
     existing = plan.index_existing(client, entity)
     result.planned = plan.classify(items, existing, on_conflict,
@@ -102,10 +132,26 @@ def import_entity(client, entity: str, items: list[dict],
                 result.skipped.append(source_id)
             continue
 
-        payload = idmap_.substitute(idmap_mod.strip_identity(source))
+        stripped = idmap_mod.strip_identity(source)
+        held = {f: stripped.pop(f) for f in deferred_fields
+                if stripped.get(f) not in (None, "")}
+        payload = idmap_.substitute(stripped)
         result.dangling |= idmap_.unmapped(payload)
 
         if not confirm:
+            # Stand-in mapping so later objects' references to this one are not
+            # reported as dangling - the real run records the real new id here.
+            if action == "update":
+                result.would_update.append(source_id)
+                target_id = step["existing"]["id"]
+            else:
+                result.would_create.append(source_id)
+                target_id = source_id
+            if source_id:
+                idmap_.record(source_id, target_id)
+            if held:
+                result.deferred.append({"source_id": source_id,
+                                        "target_id": target_id, "held": held})
             continue
 
         try:
@@ -141,6 +187,9 @@ def import_entity(client, entity: str, items: list[dict],
 
         if source_id and new_id:
             idmap_.record(source_id, new_id)
+        if held:
+            result.deferred.append({"source_id": source_id,
+                                    "target_id": new_id, "held": held})
 
         missing = verify_write(client, entity, new_id, payload)
         if missing:
@@ -149,8 +198,54 @@ def import_entity(client, entity: str, items: list[dict],
     return result
 
 
+def apply_deferred(client, entity: str, pending: list[dict],
+                   idmap_: idmap_mod.IdMap, confirm: bool) -> ImportResult:
+    """Set the fields held back at create time, now that their targets exist.
+
+    Read-modify-write: GET the object as the target stores it, set the held
+    fields to their remapped values, PUT it back, then verify.
+    """
+    result = ImportResult(entity=f"{entity}:links", dry_run=not confirm)
+    for d in pending:
+        held, target_id = d["held"], d["target_id"]
+        missing_refs = [v for v in held.values()
+                        if isinstance(v, str) and idmap_.get(v) is None]
+        if missing_refs:
+            result.failed.append({
+                "id": target_id,
+                "detail": f"{entity} {target_id} links to "
+                          f"{', '.join(missing_refs)}, which was not imported - "
+                          "that link was left unset. Import it too, or set it "
+                          "in Control Hub."})
+            continue
+        wanted = {k: idmap_.substitute(v) for k, v in held.items()}
+        if not confirm:
+            result.would_update.append(d["source_id"])
+            continue
+        try:
+            status, body = client.json("GET", registry.item_path(entity, target_id))
+            if status != 200 or not isinstance(body, dict):
+                raise ApiError(f"re-read returned HTTP {status}", status=status)
+            status, body = client.json("PUT", registry.item_path(entity, target_id),
+                                       {**body, **wanted})
+        except Exception as exc:
+            result.failed.append({"id": target_id,
+                                  "detail": f"{type(exc).__name__}: {exc}"})
+            continue
+        if status >= 400:
+            result.failed.append({"id": target_id,
+                                  "detail": f"HTTP {status}: {_reason(body)}"})
+            continue
+        result.updated.append(target_id)
+        missing = verify_write(client, entity, target_id, wanted)
+        if missing:
+            result.unverified.append({"id": target_id, "fields": missing})
+    return result
+
+
 def import_cc(client, reader, keys: list[str], on_conflict: str = "skip",
-              confirm: bool = False, on_progress=None
+              confirm: bool = False, on_progress=None,
+              idmap_: idmap_mod.IdMap | None = None
               ) -> tuple[dict[str, ImportResult], idmap_mod.IdMap]:
     """Import the cc:* selections in dependency order, sharing one IdMap.
 
@@ -160,7 +255,14 @@ def import_cc(client, reader, keys: list[str], on_conflict: str = "skip",
     """
     entities = [k.split(":", 1)[1] for k in keys if k.startswith("cc:")]
     ordered = plan.order_entities(entities)
-    shared = idmap_mod.IdMap()
+    # Read-only entities write nothing, so dependency order does not bind them;
+    # run them first so their by-name mappings exist before anything that
+    # references them (team.userIds -> user) is created.
+    ordered = ([e for e in ordered
+                if not registry.CC_ENTITIES.get(e, {}).get("writable", False)]
+               + [e for e in ordered
+                  if registry.CC_ENTITIES.get(e, {}).get("writable", False)])
+    shared = idmap_ if idmap_ is not None else idmap_mod.IdMap()
     out: dict[str, ImportResult] = {}
     for entity in ordered:
         result = import_entity(client, entity, reader.entity_items(entity),
@@ -200,7 +302,7 @@ def import_flows(client, reader, bucket: str, idmap_: idmap_mod.IdMap,
     Callers must import 'subflows' BEFORE 'flows': a flow can invoke a subflow,
     never the reverse.
     """
-    result = ImportResult(entity=f"flows:{bucket}")
+    result = ImportResult(entity=f"flows:{bucket}", dry_run=not confirm)
     flow_type = (export_flows.FLOW_TYPE if bucket == "flows"
                  else export_flows.SUBFLOW_TYPE)
     if flow_type == UNRESOLVED:
@@ -215,11 +317,14 @@ def import_flows(client, reader, bucket: str, idmap_: idmap_mod.IdMap,
 
     for flow_id, payload in reader.flows(bucket).items():
         document = idmap_.substitute((payload or {}).get("document") or {})
-        result.dangling |= idmap_.unmapped(document)
+        # A flow document carries its own id; that is not a reference.
+        result.dangling |= idmap_.unmapped(document) - {flow_id}
         result.planned.append({"action": "create", "item": {"id": flow_id},
                                "existing": None,
                                "reason": f"import into project {project_id}"})
         if not confirm:
+            result.would_create.append(flow_id)
+            idmap_.record(flow_id, flow_id)     # stand-in, as in import_entity
             continue
         try:
             status, body = client.json("POST", path, document)
@@ -235,7 +340,31 @@ def import_flows(client, reader, bucket: str, idmap_: idmap_mod.IdMap,
         result.created.append(new_id or flow_id)
         if new_id:
             idmap_.record(flow_id, new_id)
+    if confirm:
+        _map_flows_by_name(client, project_id, flow_type, reader.flows(bucket),
+                           idmap_)
     return result
+
+
+def _map_flows_by_name(client, project_id: str, flow_type: str,
+                       source: dict, idmap_: idmap_mod.IdMap) -> None:
+    """Map source flow ids to target ids by flow name, for any still unmapped.
+
+    Entry points link to flows by id. The import response is not confirmed to
+    carry the new id, and a flow that already existed in the target (import
+    refused) is still the right link target - so match on name, which Flow
+    Designer keeps unique per flow type.
+    """
+    pending = {fid: ((p or {}).get("meta") or {}).get("name")
+               or ((p or {}).get("document") or {}).get("name")
+               for fid, p in source.items() if idmap_.get(fid) is None}
+    if not pending:
+        return
+    rows, _err = export_flows.list_flows(client, project_id, flow_type)
+    by_name = {r.get("name"): r.get("id") for r in rows if r.get("name")}
+    for fid, name in pending.items():
+        if by_name.get(name):
+            idmap_.record(fid, by_name[name])
 
 
 def import_functions(client, reader, idmap_: idmap_mod.IdMap,
@@ -249,7 +378,7 @@ def import_functions(client, reader, idmap_: idmap_mod.IdMap,
     one part named "file", with a .json filename, typed
     application/octet-stream, carrying the exported document verbatim.
     """
-    result = ImportResult(entity="flows:functions")
+    result = ImportResult(entity="flows:functions", dry_run=not confirm)
     functions = reader.functions()
 
     if FUNCTION_IMPORT_FIELD == UNRESOLVED:
@@ -270,6 +399,8 @@ def import_functions(client, reader, idmap_: idmap_mod.IdMap,
                                "existing": None,
                                "reason": f"import function as {filename}"})
         if not confirm:
+            result.would_create.append(fn_id)
+            idmap_.record(fn_id, fn_id)         # stand-in, as in import_entity
             continue
         parts = [(FUNCTION_IMPORT_FIELD, filename, FUNCTION_IMPORT_PART_TYPE,
                   _json.dumps(document).encode())]
@@ -297,7 +428,7 @@ def import_calling(client, reader, names: list[str], idmap_: idmap_mod.IdMap,
     out: dict[str, ImportResult] = {}
     for name in names:
         spec = registry.CALLING_OBJECTS[name]
-        result = ImportResult(entity=f"calling:{name}")
+        result = ImportResult(entity=f"calling:{name}", dry_run=not confirm)
         items = reader.calling_items(name)
 
         existing_rows: list[dict] = []
@@ -353,15 +484,20 @@ def import_calling(client, reader, names: list[str], idmap_: idmap_mod.IdMap,
                 continue
 
             raw_loc = source.get("_locationId")
-            if not raw_loc:
+            if name == "locations":
+                # A location has no parent location; demanding one failed every
+                # location create. ("scope" in the registry is the LISTING
+                # scope - org-listed objects are still created per location.)
+                raw_loc = None
+            elif not raw_loc:
                 result.failed.append({
                     "id": source_id,
                     "detail": f"{name} {source.get('name')!r} has no location "
                               "in the archive, and every Calling create endpoint "
                               "is location-scoped"})
                 continue
-            loc_id = idmap_.get(raw_loc)
-            if not loc_id:
+            loc_id = idmap_.get(raw_loc) if raw_loc else None
+            if raw_loc and not loc_id:
                 # The source tenant's raw id must NEVER be sent to the target -
                 # that would create the object against the wrong tenant's
                 # location and report a clean success.
@@ -378,9 +514,12 @@ def import_calling(client, reader, names: list[str], idmap_: idmap_mod.IdMap,
             payload = idmap_.substitute(idmap_mod.strip_identity(source))
             result.dangling |= idmap_.unmapped(payload)
             if not confirm:
+                result.would_create.append(source_id)
+                if source_id:
+                    idmap_.record(source_id, source_id)   # stand-in
                 continue
 
-            create_path = spec["item"].replace("{locationId}", loc_id)
+            create_path = spec["item"].replace("{locationId}", loc_id or "")
             create_path = create_path.rsplit("/{id}", 1)[0]
             try:
                 status, body = client.json("POST", create_path, payload)
@@ -399,3 +538,52 @@ def import_calling(client, reader, names: list[str], idmap_: idmap_mod.IdMap,
 
         out[name] = result
     return out
+
+
+def run_import(cc, wx, reader, keys: list[str], on_conflict: str, confirm: bool,
+               target_org_id: str | None, overwrite_flows: bool = False,
+               on_progress=None) -> dict[str, ImportResult]:
+    """The whole import, in the one order that works. Used by the CLI AND the
+    web UI - two hand-copied sequences had already drifted once.
+
+      1. Contact Center entities, dependency-ordered (deferred fields held back)
+      2. subflows, then flows (a flow can invoke a subflow, never the reverse)
+      3. functions
+      4. deferred fields - entry points get their flowId now the flows exist
+      5. Webex Calling
+    """
+    seed = idmap_mod.IdMap()
+    seed.known_source_ids = set(reader.source_ids())
+    source_org = (reader.manifest.get("source") or {}).get("orgId")
+    if source_org and target_org_id:
+        # Flow documents embed the source org id; it must become the target org.
+        seed.record(source_org, target_org_id)
+
+    results, idmap_ = import_cc(cc, reader, keys, on_conflict, confirm,
+                                on_progress=on_progress, idmap_=seed)
+
+    def done(name: str, r: ImportResult) -> None:
+        results[name] = r
+        if on_progress:
+            on_progress(name, r)
+
+    for bucket in ("subflows", "flows"):
+        if f"flows:{bucket}" in keys:
+            done(f"flows:{bucket}", import_flows(cc, reader, bucket, idmap_,
+                                                 overwrite_flows, confirm))
+    if "flows:functions" in keys:
+        done("flows:functions", import_functions(cc, reader, idmap_,
+                                                 confirm=confirm))
+
+    for entity in list(results):
+        pending = getattr(results[entity], "deferred", None)
+        if pending:
+            r = apply_deferred(cc, entity, pending, idmap_, confirm)
+            done(r.entity, r)
+
+    calling_names = [k.split(":", 1)[1] for k in keys if k.startswith("calling:")]
+    if calling_names:
+        for name, r in import_calling(wx, reader, calling_names, idmap_,
+                                      on_conflict, confirm).items():
+            done(f"calling:{name}", r)
+    return results

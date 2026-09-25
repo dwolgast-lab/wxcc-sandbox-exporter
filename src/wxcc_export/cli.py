@@ -226,29 +226,10 @@ def _run_import(cfg: dict, args) -> int:
     if not args.confirm:
         print("\nDRY RUN - nothing will be written. Add --confirm to apply.\n")
 
-    results, idmap_ = importer.import_cc(
-        cc, reader, keys, args.on_conflict, args.confirm,
-        on_progress=lambda e, r: print(f"  {r.summary()}"))
-
-    # Subflows before flows: a flow can invoke a subflow, never the reverse.
-    for bucket in ("subflows", "flows"):
-        if f"flows:{bucket}" in keys:
-            r = importer.import_flows(cc, reader, bucket, idmap_,
-                                      args.overwrite_flows, args.confirm)
-            results[f"flows:{bucket}"] = r
-            print(f"  {r.summary()}")
-    if "flows:functions" in keys:
-        r = importer.import_functions(cc, reader, idmap_, confirm=args.confirm)
-        results["flows:functions"] = r
-        print(f"  {r.summary()}")
-
-    calling_names = [k.split(":", 1)[1] for k in keys if k.startswith("calling:")]
-    if calling_names:
-        for name, r in importer.import_calling(wx, reader, calling_names, idmap_,
-                                               args.on_conflict,
-                                               args.confirm).items():
-            results[f"calling:{name}"] = r
-            print(f"  {r.summary()}")
+    results = importer.run_import(
+        cc, wx, reader, keys, args.on_conflict, args.confirm,
+        target_org_id=info.get("org_id"), overwrite_flows=args.overwrite_flows,
+        on_progress=lambda _name, r: print(f"  {r.summary()}"))
 
     failed = sum(len(r.failed) for r in results.values())
     unverified = sum(len(r.unverified) for r in results.values())
@@ -261,11 +242,16 @@ def _run_import(cfg: dict, args) -> int:
         for u in r.unverified:
             print(f"  UNVERIFIED {r.entity} {u['id']}: the server did not store "
                   f"{', '.join(u['fields'])}")
+        if r.manual:
+            print(f"  MANUAL  {r.entity}: {len(r.manual)} to recreate by hand. "
+                  f"{r.note}")
     if dangling:
-        print(f"\n  {len(dangling)} reference(s) point at objects that were not "
-              "imported. Those links are broken in the target:")
+        print(f"\n  {len(dangling)} reference(s) point at objects in the archive "
+              "that were not imported. Those links will be broken in the target:")
         for d in sorted(dangling)[:15]:
             print(f"    {d}")
+        if len(dangling) > 15:
+            print(f"    ... and {len(dangling) - 15} more")
 
     reader.close()
     if not args.confirm:
